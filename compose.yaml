@@ -1,0 +1,114 @@
+x-common-environment: &common-environment
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tomoshibiyori:tomoshibiyori@db:5432/tomoshibiyori}
+  MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-alpha_vantage}
+  JQUANTS_PLAN: ${JQUANTS_PLAN:-light}
+  MARKET_SCREENING_LIMIT: ${MARKET_SCREENING_LIMIT:-500}
+  NOTIFICATION_DRY_RUN: ${NOTIFICATION_DRY_RUN:-true}
+
+x-stock-signal: &stock-signal
+  image: tomoshibiyori:local
+  build:
+    context: .
+  volumes:
+    - ./src:/app/src
+    - ./tests:/app/tests
+    - ./migrations:/app/migrations
+    - ./alembic.ini:/app/alembic.ini:ro
+    - ./data:/app/data:ro
+    - ./models:/app/models
+    - ./reports:/app/reports
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tomoshibiyori
+      POSTGRES_USER: tomoshibiyori
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tomoshibiyori}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tomoshibiyori -d tomoshibiyori"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    <<: *stock-signal
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *common-environment
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    <<: *stock-signal
+    environment:
+      <<: *common-environment
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  batch:
+    <<: *stock-signal
+    command: ["stock-signal", "daily"]
+    environment:
+      <<: *common-environment
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    <<: *stock-signal
+    environment:
+      <<: *common-environment
+    command:
+      - uvicorn
+      - stock_signal.web.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  test-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tomoshibiyori_test
+      POSTGRES_USER: tomoshibiyori
+      POSTGRES_PASSWORD: test-password
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tomoshibiyori -d tomoshibiyori_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  test:
+    <<: *stock-signal
+    command: ["pytest"]
+    environment:
+      <<: *common-environment
+      DATABASE_URL: postgresql+psycopg://tomoshibiyori:test-password@test-db:5432/tomoshibiyori_test
+      TEST_DATABASE_URL: postgresql+psycopg://tomoshibiyori:test-password@test-db:5432/tomoshibiyori_test
+    depends_on:
+      test-db:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
