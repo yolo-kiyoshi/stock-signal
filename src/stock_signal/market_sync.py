@@ -112,9 +112,14 @@ def sync_bulk_daily_bars(
     end: date,
     *,
     history_start: date | None = None,
+    refresh_completed: bool = False,
     on_progress: Callable[[str], None] | None = None,
 ) -> BulkSyncSummary:
-    """バルク未調整値とREST APIの調整済み日足を再開可能に保存する。"""
+    """バルク未調整値とREST APIの調整済み日足を再開可能に保存する。
+
+    refresh_completedでは正常チェックポイントを保持したまま再取得し、失敗時に
+    直前の正常データを未完了へ戻さない。
+    """
     files = list(provider.list_bulk_files(DAILY_BARS_ENDPOINT, start, end))
     summary: BulkSyncSummary = {
         "files": len(files),
@@ -132,21 +137,27 @@ def sync_bulk_daily_bars(
             on_progress(
                 f"[{file_number}/{len(files)}] 調整済み日足を処理中: {item.key}"
             )
-        raw_succeeded = bulk_file_succeeded(database_url, item.key)
-        adjusted_succeeded = bulk_adjustment_succeeded(database_url, item.key)
+        raw_was_succeeded = bulk_file_succeeded(database_url, item.key)
+        adjusted_was_succeeded = bulk_adjustment_succeeded(
+            database_url, item.key
+        )
+        raw_succeeded = raw_was_succeeded and not refresh_completed
+        adjusted_succeeded = adjusted_was_succeeded and not refresh_completed
         if raw_succeeded and adjusted_succeeded:
             summary["skipped"] += 1
             continue
+        processing_adjustment = False
         try:
             bulk_bars = []
             if not raw_succeeded:
-                record_bulk_file(
-                    database_url,
-                    file_key=item.key,
-                    endpoint=item.endpoint,
-                    target_date=item.target_date,
-                    status="running",
-                )
+                if not (refresh_completed and raw_was_succeeded):
+                    record_bulk_file(
+                        database_url,
+                        file_key=item.key,
+                        endpoint=item.endpoint,
+                        target_date=item.target_date,
+                        status="running",
+                    )
                 bulk_bars = list(provider.download_bulk_daily_bars(item.key))
                 bulk_bars = [
                     bar for bar in bulk_bars if start <= bar.trade_date <= end
@@ -168,7 +179,9 @@ def sync_bulk_daily_bars(
 
             adjusted_bars = []
             if not adjusted_succeeded:
-                record_bulk_adjustment(database_url, item.key, "running")
+                processing_adjustment = True
+                if not (refresh_completed and adjusted_was_succeeded):
+                    record_bulk_adjustment(database_url, item.key, "running")
                 if bulk_bars and all(bar.is_adjusted for bar in bulk_bars):
                     adjusted_bars = bulk_bars
                 else:
@@ -235,20 +248,21 @@ def sync_bulk_daily_bars(
                 summary["refreshed_symbols"] += len(split_symbols)
         except (MarketDataError, SQLAlchemyError, ValueError) as error:
             error_message = _concise_error(error)
-            if not bulk_file_succeeded(database_url, item.key):
+            if processing_adjustment:
+                if not (refresh_completed and adjusted_was_succeeded):
+                    record_bulk_adjustment(
+                        database_url,
+                        item.key,
+                        "failed",
+                        error_message=error_message,
+                    )
+            elif not (refresh_completed and raw_was_succeeded):
                 record_bulk_file(
                     database_url,
                     file_key=item.key,
                     endpoint=item.endpoint,
                     target_date=item.target_date,
                     status="failed",
-                    error_message=error_message,
-                )
-            else:
-                record_bulk_adjustment(
-                    database_url,
-                    item.key,
-                    "failed",
                     error_message=error_message,
                 )
             summary["failed"] += 1

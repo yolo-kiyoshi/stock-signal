@@ -156,6 +156,7 @@ class TransitionReadiness:
     summary: str
     next_condition: TransitionCondition | None
     conditions: tuple[TransitionCondition, ...]
+    current_price: float
     trigger_price: float
     invalidation_price: float
     target_price: float

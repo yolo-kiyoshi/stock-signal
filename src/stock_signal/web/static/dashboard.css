@@ -480,6 +480,32 @@ body.sidebar-collapsed .sidebar {
   background: var(--surface);
 }
 .prediction-section { margin-top: 16px; }
+.horizon-controls { flex-wrap: nowrap; }
+.horizon-controls button {
+  min-width: 132px;
+  padding: 9px 12px;
+  text-align: left;
+}
+.horizon-controls strong, .horizon-controls small { display: block; }
+.horizon-controls strong { font-size: 11px; }
+.horizon-controls small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.horizon-controls button.active small { color: color-mix(in srgb, var(--surface) 72%, transparent); }
+.horizon-guide {
+  display: grid;
+  grid-template-columns: minmax(150px, .7fr) minmax(0, 2.3fr);
+  gap: 16px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-subtle);
+}
+.horizon-guide > div > span { display: block; color: var(--muted); font-size: 9px; }
+.horizon-guide > div > strong { display: block; margin-top: 3px; font-size: 14px; }
+.horizon-guide dl { display: grid; grid-template-columns: .7fr 1.5fr 1.5fr; gap: 8px; margin: 0; }
+.horizon-guide dl div { min-width: 0; }
+.horizon-guide dt { color: var(--muted); font-size: 9px; }
+.horizon-guide dd { margin: 3px 0 0; font-size: 10px; line-height: 1.45; }
 
 .custom-range {
   display: flex;
@@ -567,6 +593,17 @@ body.sidebar-collapsed .sidebar {
 .transition-condition.satisfied > span { color: var(--up); }
 .transition-condition strong { font-size: 10px; }
 .transition-condition p { margin: 3px 0 0; color: var(--muted); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
+.position-size-calculator { margin-bottom: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-subtle); }
+.position-size-calculator > div:first-child span { display: block; color: var(--muted); font-size: 10px; }
+.position-size-calculator > div:first-child strong { display: block; margin-top: 2px; font-size: 14px; }
+.position-size-calculator label { display: block; margin-top: 10px; color: var(--muted); font-size: 10px; }
+.position-size-calculator label span { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--text); }
+.position-size-calculator input { width: min(240px, 100%); padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.position-size-calculator dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 0; }
+.position-size-calculator dl div { padding: 8px; border-radius: 6px; background: var(--surface); }
+.position-size-calculator dt { color: var(--muted); font-size: 9px; }
+.position-size-calculator dd { margin: 3px 0 0; font-size: 12px; font-weight: 650; }
+.position-size-calculator > p { margin: 9px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .evidence-score { text-align: right; }
 .evidence-score strong { display: block; font-variant-numeric: tabular-nums; }
 .evidence-score small { color: var(--muted); font-size: 10px; }
@@ -615,6 +652,10 @@ body.sidebar-collapsed .sidebar {
 .check-item.plan_unavailable span,
 .check-item.addon_required span { color: var(--muted); }
 .check-item p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.engine-validation-status { margin: 14px 0; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-subtle); }
+.engine-validation-status span { display: block; color: var(--muted); font-size: 9px; }
+.engine-validation-status strong { display: block; margin-top: 2px; font-size: 12px; }
+.engine-validation-status p { margin: 6px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .factor-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
 .factor-item { min-width: 0; padding: 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .factor-item > strong { display: block; margin-top: 9px; font-size: 12px; }
@@ -635,6 +676,8 @@ body.sidebar-collapsed .sidebar {
   .factor-list { grid-template-columns: 1fr 1fr; }
   .capability-grid { grid-template-columns: 1fr 1fr; }
   .transition-levels { grid-template-columns: 1fr 1fr; }
+  .position-size-calculator dl { grid-template-columns: 1fr 1fr; }
+  .horizon-guide { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 700px) {
@@ -654,6 +697,10 @@ body.sidebar-collapsed .sidebar {
   .transition-heading { flex-direction: column; }
   .transition-progress { text-align: left; }
   .transition-condition-list { grid-template-columns: 1fr; }
+  .position-size-calculator dl { grid-template-columns: 1fr; }
+  .horizon-controls { display: grid; grid-template-columns: 1fr 1fr; }
+  .horizon-controls button { min-width: 0; }
+  .horizon-guide dl { grid-template-columns: 1fr; }
   .custom-range { flex-wrap: wrap; }
   .price-chart { min-height: 430px; }
   .workspace { height: auto; overflow: visible; }

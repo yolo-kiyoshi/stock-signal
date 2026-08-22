@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from statistics import fmean, median
 
+from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.domain.analysis import (
     BreakoutKind,
     Direction,
@@ -11,20 +12,6 @@ from stock_signal.domain.analysis import (
     PatternType,
 )
 from stock_signal.domain.market_data import DailyBar
-
-
-def _atr(bars: Sequence[DailyBar], end: int, window: int = 20) -> float | None:
-    """endを含めず、その直前までのATRを計算する。"""
-    start = max(1, end - window)
-    if end - start < window:
-        return None
-    true_ranges = []
-    for index in range(start, end):
-        previous_close = float(bars[index - 1].close)
-        high = float(bars[index].high)
-        low = float(bars[index].low)
-        true_ranges.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
-    return fmean(true_ranges)
 
 
 def _linear_slope(values: Sequence[float]) -> float:
@@ -113,7 +100,7 @@ class TechnicalPatternDetector:
         return tuple(item for item in ordered_patterns if item.detected_at == latest_date)
 
     def _context(self, bars: Sequence[DailyBar], index: int) -> _BreakoutContext:
-        atr = _atr(bars, index)
+        atr = wilder_atr(bars, end=index)
         prior_volumes = [bar.volume for bar in bars[max(0, index - 60):index] if bar.volume > 0]
         volume_ratio = None
         if len(prior_volumes) >= 20:

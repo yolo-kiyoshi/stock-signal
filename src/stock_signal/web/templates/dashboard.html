@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TOMOSHIBIYORI</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='dashboard.css') }}?v=20260818-2">
+  <link rel="stylesheet" href="{{ url_for('static', path='dashboard.css') }}?v=20260822-1">
   <script defer src="/assets/plotly.min.js"></script>
-  <script defer src="{{ url_for('static', path='dashboard.js') }}?v=20260818-2"></script>
+  <script defer src="{{ url_for('static', path='dashboard.js') }}?v=20260822-1"></script>
 </head>
 <body
   data-selected-symbol="{{ selected_symbol or '' }}"
@@ -226,7 +226,7 @@
         hidden
       >
         <div class="panel-heading">
-          <h2>5営業日の投資検討区分</h2>
+          <h2>スイング（5営業日）の投資検討区分</h2>
           <span class="help-tooltip">
             <button type="button" class="help-tooltip-trigger" aria-label="分析候補の注意事項" aria-describedby="candidate-analysis-help">?</button>
             <span id="candidate-analysis-help" class="help-tooltip-content help-tooltip-content-wide" role="tooltip">
@@ -392,13 +392,30 @@
 
       <section class="prediction-section">
         <div class="prediction-header">
-          <div><h3>投資判断材料</h3><p class="muted">チャートパターンと個別株固有の確認を分離したルールベース分析</p></div>
-          <div class="horizon-controls" aria-label="分析期間">
-            <button type="button" data-horizon="1">1営業日</button>
-            <button type="button" data-horizon="5" class="active">5営業日</button>
-            <button type="button" data-horizon="20">20営業日</button>
+          <div>
+            <h3>投資判断材料</h3>
+            <p class="muted">保有期間ではなく、判断したい目的から運用スタイルを選びます</p>
+          </div>
+          <div class="horizon-controls" aria-label="運用スタイル">
+            <button type="button" data-horizon="5" class="active" aria-pressed="true">
+              <strong>スイング</strong><small>5営業日先</small>
+            </button>
+            <button type="button" data-horizon="20" aria-pressed="false">
+              <strong>中長期の買い場</strong><small>20営業日先</small>
+            </button>
           </div>
         </div>
+        <aside id="horizon-guide" class="horizon-guide" aria-live="polite">
+          <div>
+            <span>現在の使い方</span>
+            <strong id="horizon-guide-title">スイング・5営業日先</strong>
+          </div>
+          <dl>
+            <div><dt>想定</dt><dd id="horizon-guide-holding">数日〜数週間</dd></div>
+            <div><dt>見るもの</dt><dd id="horizon-guide-purpose">転換初動やブレイク後の、新規購入タイミング</dd></div>
+            <div><dt>注意</dt><dd id="horizon-guide-caution">1日だけの値動きで追わず、出来高と無効化水準も確認</dd></div>
+          </dl>
+        </aside>
         <div id="prediction-content" class="prediction-empty" aria-live="polite">
           分析結果を読み込んでいます。
         </div>

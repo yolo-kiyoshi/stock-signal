@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date
 from statistics import median
-from typing import Callable
 
+from stock_signal.analysis.horizons import get_horizon_profile
+from stock_signal.analysis.market_relative import calculate_market_relative_metrics
 from stock_signal.domain.analysis import (
     AnalysisContext,
     BreakoutKind,
@@ -45,6 +46,7 @@ class LongOnlyDecisionPolicy:
         bars: Sequence[DailyBar],
         patterns: Sequence[PatternDetection],
         context: AnalysisContext | None = None,
+        horizon_days: int = 5,
     ) -> tuple[EquityCheck, ...]:
         context = context or AnalysisContext(jquants_plan=self.jquants_plan)
         latest = patterns[0] if patterns else None
@@ -159,8 +161,11 @@ class LongOnlyDecisionPolicy:
                 "日足データがありません",
             )
 
-        market = self._market_check(context, bars)
-        earnings = self._earnings_check(context, bars)
+        market = self._market_check(context, bars, horizon_days)
+        relative_strength, beta = self._relative_checks(
+            context, bars, horizon_days
+        )
+        earnings = self._earnings_check(context, bars, horizon_days)
         if context.jquants_plan in {"standard", "premium"}:
             sector = EquityCheck(
                 "sector_trend_score",
@@ -196,7 +201,16 @@ class LongOnlyDecisionPolicy:
             ),
         )
         return (
-            freshness, volume, gap, liquidity, market, sector, earnings, disclosure
+            freshness,
+            volume,
+            gap,
+            liquidity,
+            market,
+            relative_strength,
+            beta,
+            sector,
+            earnings,
+            disclosure,
         )
 
     def decide(
@@ -209,6 +223,7 @@ class LongOnlyDecisionPolicy:
         checks: Sequence[EquityCheck],
         horizon_days: int,
     ) -> InvestmentDecision:
+        profile = get_horizon_profile(horizon_days)
         latest_patterns = self._latest_patterns(patterns)
         lifecycle_by_type = {item.pattern_type: item for item in lifecycles}
         bullish = [item for item in latest_patterns if item.direction is Direction.UP]
@@ -230,9 +245,18 @@ class LongOnlyDecisionPolicy:
             "保証するものではありません"
         )
         cautions.append(
-            "新規検討5営業日・監視20営業日は固定した初期運用ルールであり、"
+            f"{profile.label}は{profile.future_label}を確認する固定ルールであり、"
             "銘柄別の利益を保証する最適期間ではありません"
         )
+        cautions.append(profile.caution)
+        relative_strength = next(
+            check for check in checks if check.key == "relative_strength"
+        )
+        if relative_strength.value is not None and relative_strength.value < -3:
+            cautions.append(
+                f"対象期間の相対力はTOPIX比{relative_strength.value:+.2f}%で、"
+                "市場より弱い状態です"
+            )
 
         if bullish and bearish:
             return InvestmentDecision(
@@ -342,7 +366,10 @@ class LongOnlyDecisionPolicy:
                     tuple(cautions),
                 )
             earnings = next(check for check in checks if check.key == "days_to_earnings")
-            if earnings.value is not None and 0 <= earnings.value <= horizon_days:
+            if (
+                earnings.value is not None
+                and 0 <= earnings.value <= profile.earnings_exclusion_days
+            ):
                 reasons.append(
                     f"{int(earnings.value)}日後に決算発表予定があります"
                 )
@@ -406,6 +433,15 @@ class LongOnlyDecisionPolicy:
                     tuple(reasons),
                     tuple(cautions),
                 )
+            if horizon_days == 20 and direction is Direction.DOWN:
+                reasons.append("20日・60日を中心とする中期方向が下向きです")
+                return InvestmentDecision(
+                    InvestmentAction.WATCH,
+                    evidence_score,
+                    "上抜けは確認しましたが、中期トレンドの改善を待ちます",
+                    tuple(reasons),
+                    tuple(cautions),
+                )
             reasons.append(f"出来高が平常時中央値の{lead.volume_ratio:.2f}倍です")
             reasons.append(f"上抜け幅は{lead.breakout_atr:.2f} ATRです")
             return InvestmentDecision(
@@ -427,24 +463,35 @@ class LongOnlyDecisionPolicy:
                     tuple(reasons),
                     tuple(cautions),
                 )
-            if (
-                transition.risk_reward_ratio is not None
-                and transition.risk_reward_ratio >= 1.5
-            ):
-                reasons.append(
-                    f"参考リスクリワードは{transition.risk_reward_ratio:.2f}です"
-                )
+            if horizon_days == 20 and direction is Direction.DOWN:
+                reasons.append("中期テクニカル方向がまだ下向きです")
                 return InvestmentDecision(
-                    InvestmentAction.BUY_CANDIDATE,
+                    InvestmentAction.WATCH,
                     round(transition.readiness_score, 1),
-                    "価格と出来高による上昇転換の初動を確認しました",
+                    "転換初動は確認しましたが、中期方向の改善を待ちます",
                     tuple(reasons),
                     tuple(cautions),
+                )
+            if transition.current_price < transition.trigger_price:
+                reasons.append(
+                    f"終値{transition.current_price:.2f}は転換水準"
+                    f"{transition.trigger_price:.2f}の直前です"
+                )
+                return InvestmentDecision(
+                    InvestmentAction.WATCH,
+                    round(transition.readiness_score, 1),
+                    "転換水準へ接近し出来高も増えていますが、上抜け前です",
+                    tuple(reasons),
+                    tuple(cautions),
+                )
+            if transition.risk_reward_ratio is not None:
+                reasons.append(
+                    f"参考リスクリワードは{transition.risk_reward_ratio:.2f}です"
                 )
             return InvestmentDecision(
                 InvestmentAction.WATCH,
                 round(transition.readiness_score, 1),
-                "転換初動は確認しましたが、目標までの値幅余地を追加確認します",
+                "転換初動は確認しましたが、完成ブレイクの価格・出来高条件を待ちます",
                 tuple(reasons),
                 tuple(cautions),
             )
@@ -499,9 +546,77 @@ class LongOnlyDecisionPolicy:
         return [item for item in patterns if item.detected_at == latest_date]
 
     @staticmethod
+    def _relative_checks(
+        context: AnalysisContext,
+        bars: Sequence[DailyBar],
+        horizon_days: int,
+    ) -> tuple[EquityCheck, EquityCheck]:
+        profile = get_horizon_profile(horizon_days)
+        market_bars = [
+            bar for bar in context.market_bars
+            if not bars or bar.trade_date <= bars[-1].trade_date
+        ]
+        metrics = calculate_market_relative_metrics(
+            bars, market_bars, profile.market_window
+        )
+        if metrics is None:
+            unavailable = (
+                CheckStatus.PLAN_UNAVAILABLE
+                if context.jquants_plan == "free"
+                else CheckStatus.PENDING_DATA
+            )
+            message = (
+                "TOPIXとの共通取引日が不足しているため、まだ計算できません"
+            )
+            return (
+                EquityCheck(
+                    "relative_strength",
+                    "TOPIX相対力",
+                    unavailable,
+                    None,
+                    "%",
+                    message,
+                ),
+                EquityCheck(
+                    "beta_topix",
+                    "対TOPIXベータ",
+                    unavailable,
+                    None,
+                    "倍",
+                    message,
+                ),
+            )
+        relative = EquityCheck(
+            "relative_strength",
+            "TOPIX相対力",
+            CheckStatus.EVALUATED,
+            metrics.relative_strength_percent,
+            "%",
+            f"{metrics.window}営業日で対象株{metrics.stock_return_percent:+.2f}%、"
+            f"TOPIX{metrics.market_return_percent:+.2f}%との差です",
+        )
+        beta = EquityCheck(
+            "beta_topix",
+            "対TOPIXベータ",
+            CheckStatus.EVALUATED if metrics.beta is not None else CheckStatus.UNAVAILABLE,
+            metrics.beta,
+            "倍",
+            (
+                f"{metrics.window}営業日の共通取引日リターンから計算した"
+                f"単回帰ベータは{metrics.beta:.2f}です"
+                if metrics.beta is not None
+                else "TOPIXの日次変動がないためベータを計算できません"
+            ),
+        )
+        return relative, beta
+
+    @staticmethod
     def _market_check(
-        context: AnalysisContext, bars: Sequence[DailyBar]
+        context: AnalysisContext,
+        bars: Sequence[DailyBar],
+        horizon_days: int,
     ) -> EquityCheck:
+        profile = get_horizon_profile(horizon_days)
         if context.jquants_plan == "free":
             return EquityCheck(
                 "market_trend_score",
@@ -515,7 +630,7 @@ class LongOnlyDecisionPolicy:
             bar for bar in context.market_bars
             if not bars or bar.trade_date <= bars[-1].trade_date
         ]
-        if len(market_bars) < 21:
+        if len(market_bars) <= profile.market_window:
             return EquityCheck(
                 "market_trend_score",
                 "TOPIXトレンド",
@@ -524,21 +639,30 @@ class LongOnlyDecisionPolicy:
                 "点",
                 "Lightプランで利用可能です。TOPIX日足の同期後に有効になります",
             )
-        change = float(market_bars[-1].close / market_bars[-21].close - 1)
-        score = max(-100.0, min(100.0, change * 500))
+        change = float(
+            market_bars[-1].close
+            / market_bars[-profile.market_window - 1].close
+            - 1
+        )
+        score_multiplier = 1000 / abs(profile.market_minimum_return_percent)
+        score = max(-100.0, min(100.0, change * score_multiplier))
         return EquityCheck(
             "market_trend_score",
             "TOPIXトレンド",
             CheckStatus.EVALUATED,
             round(score, 1),
             "点",
-            f"TOPIXの20営業日騰落率は{change * 100:+.2f}%です",
+            f"TOPIXの{profile.market_window}営業日騰落率は"
+            f"{change * 100:+.2f}%です",
         )
 
     @staticmethod
     def _earnings_check(
-        context: AnalysisContext, bars: Sequence[DailyBar]
+        context: AnalysisContext,
+        bars: Sequence[DailyBar],
+        horizon_days: int,
     ) -> EquityCheck:
+        profile = get_horizon_profile(horizon_days)
         if not context.earnings_synced:
             return EquityCheck(
                 "days_to_earnings",
@@ -558,11 +682,26 @@ class LongOnlyDecisionPolicy:
                 "現在取得できる将来の決算発表予定はありません",
             )
         days = (context.next_earnings_date - bars[-1].trade_date).days
+        if 0 <= days <= profile.earnings_exclusion_days:
+            status = CheckStatus.PARTIAL
+            description = (
+                f"次回決算予定まで{days}日です。"
+                f"{profile.earnings_exclusion_days}日以内は"
+                "購入候補を様子見へ変更します"
+            )
+        elif 0 <= days <= horizon_days:
+            status = CheckStatus.PARTIAL
+            description = (
+                f"次回決算予定まで{days}日です。分析期間内ですが警告表示にとどめます"
+            )
+        else:
+            status = CheckStatus.EVALUATED
+            description = f"次回決算予定まで{days}日です"
         return EquityCheck(
             "days_to_earnings",
             "決算までの日数",
-            CheckStatus.EVALUATED,
+            status,
             float(days),
             "日",
-            f"次回決算発表予定日は{context.next_earnings_date.isoformat()}です",
+            description,
         )

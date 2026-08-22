@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from plotly.offline import get_plotlyjs
 
+from stock_signal.analysis.horizons import get_horizon_profile
 from stock_signal.analysis.service import AnalysisService
 from stock_signal.config import Settings
 from stock_signal.database import (
@@ -55,7 +56,7 @@ app = FastAPI(
     description=(
         "保有銘柄、ウォッチリスト、市場全体候補の日足と分析情報を確認するアプリケーション"
     ),
-    version="0.6.0",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -189,6 +190,7 @@ def _serialize_prediction(prediction) -> dict[str, object]:
 
 def _serialize_analysis(result, display_name: str | None = None) -> dict[str, object]:
     decision = result.investment_decision
+    horizon_profile = get_horizon_profile(result.horizon_days)
     lifecycle_by_type = {
         lifecycle.pattern_type: lifecycle for lifecycle in result.pattern_lifecycles
     }
@@ -232,6 +234,15 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
         "display_name": display_name,
         "as_of_date": result.as_of_date,
         "horizon_days": result.horizon_days,
+        "horizon_profile": {
+            "key": horizon_profile.key,
+            "label": horizon_profile.label,
+            "future_label": horizon_profile.future_label,
+            "holding_period": horizon_profile.holding_period,
+            "purpose": horizon_profile.purpose,
+            "caution": horizon_profile.caution,
+            "minimum_bars": horizon_profile.minimum_bars,
+        },
         "direction": result.direction.value,
         "scores": {direction.value: score for direction, score in result.scores.items()},
         "factors": [
@@ -263,6 +274,7 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
             "conditions": [
                 serialize_condition(condition) for condition in transition.conditions
             ],
+            "current_price": transition.current_price,
             "trigger_price": transition.trigger_price,
             "invalidation_price": transition.invalidation_price,
             "target_price": transition.target_price,
@@ -319,7 +331,10 @@ def _validate_horizon(horizon: int) -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(
+    request: Request,
+    symbol: str | None = Query(None, pattern=r"^[0-9A-Z]{4}$"),
+):
     watchlist = list_watchlist_items(settings.database_url)
     positions = list_positions(settings.database_url)
     registrations = list_watchlist_registrations(settings.database_url)
@@ -357,7 +372,16 @@ def dashboard(request: Request):
         ),
         "buy_candidate",
     )
-    selected_item = positions[0] if positions else watchlist[0] if watchlist else None
+    normalized_symbol = symbol.strip().upper() if symbol else None
+    available_items = [*positions, *watchlist]
+    selected_item = next(
+        (
+            item
+            for item in available_items
+            if item.symbol == normalized_symbol
+        ),
+        positions[0] if positions else watchlist[0] if watchlist else None,
+    )
     selected_symbol = selected_item.symbol if selected_item else None
     selected_provider = selected_item.provider if selected_item else None
     latest_date = max((result.as_of_date for _, result in analyses), default=None)

@@ -10,6 +10,7 @@ from stock_signal.analysis.base import (
     TransitionReadinessEvaluatorProtocol,
 )
 from stock_signal.analysis.decision import LongOnlyDecisionPolicy
+from stock_signal.analysis.horizons import get_horizon_profile
 from stock_signal.analysis.lifecycle import PatternLifecycleEvaluator
 from stock_signal.analysis.patterns import TechnicalPatternDetector
 from stock_signal.analysis.rules import DEFAULT_RULES
@@ -31,8 +32,7 @@ class RuleBasedAnalysisEngine:
     """注入されたルールを集計する、決定論的な分析エンジン。"""
 
     engine_id = "rule_based_technical"
-    version = "2.3.0"
-    minimum_bars = 25
+    version = "2.5.0"
 
     def __init__(
         self,
@@ -55,20 +55,18 @@ class RuleBasedAnalysisEngine:
         horizon_days: int,
         context: AnalysisContext | None = None,
     ) -> AnalysisResult:
-        if horizon_days not in {1, 5, 20}:
-            raise ValueError(
-                "分析期間は1、5、20営業日のいずれかで指定してください"
-            )
+        profile = get_horizon_profile(horizon_days)
         ordered = sorted(bars, key=lambda bar: bar.trade_date)
         as_of_date = ordered[-1].trade_date.isoformat() if ordered else ""
-        if len(ordered) < self.minimum_bars:
+        if len(ordered) < profile.minimum_bars:
             return AnalysisResult(
                 symbol=symbol.upper(), as_of_date=as_of_date, horizon_days=horizon_days,
                 direction=Direction.FLAT, scores={direction: 0.0 for direction in Direction},
                 factors=(), engine_id=self.engine_id, engine_version=self.version,
                 status="insufficient_data",
                 message=(
-                    f"分析には最低{self.minimum_bars}営業日の日足が必要です"
+                    f"{profile.label}分析には最低{profile.minimum_bars}営業日の"
+                    "日足が必要です"
                     f"（現在{len(ordered)}件）"
                 ),
                 investment_decision=InvestmentDecision(
@@ -128,9 +126,10 @@ class RuleBasedAnalysisEngine:
             pattern_lifecycles,
             direction,
             analysis_context,
+            horizon_days,
         )
         checks = self.decision_policy.equity_checks(
-            ordered, patterns, analysis_context
+            ordered, patterns, analysis_context, horizon_days
         )
         decision = self.decision_policy.decide(
             direction,

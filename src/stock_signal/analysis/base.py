@@ -66,4 +66,5 @@ class TransitionReadinessEvaluatorProtocol(Protocol):
         lifecycles: Sequence[PatternLifecycleAssessment],
         direction: Direction,
         context: AnalysisContext,
+        horizon_days: int,
     ) -> TransitionReadiness: ...

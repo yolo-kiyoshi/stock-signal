@@ -13,10 +13,38 @@
   const sidebarSearchInput = document.getElementById("sidebar-search-input");
   const sidebarSearchClear = document.getElementById("sidebar-search-clear");
   const sidebarSearchEmpty = document.getElementById("sidebar-search-empty");
+  const horizonGuideTitle = document.getElementById("horizon-guide-title");
+  const horizonGuideHolding = document.getElementById("horizon-guide-holding");
+  const horizonGuidePurpose = document.getElementById("horizon-guide-purpose");
+  const horizonGuideCaution = document.getElementById("horizon-guide-caution");
   let selectedSymbol = body.dataset.selectedSymbol;
   let selectedProvider = body.dataset.selectedProvider || null;
   let selectedRange = "3m";
   let selectedHorizon = 5;
+
+  const horizonProfiles = {
+    5: {
+      label: "スイング",
+      future_label: "5営業日先",
+      holding_period: "数日〜数週間",
+      purpose: "転換初動やブレイク後の、新規購入タイミングを確認します。",
+      caution: "1日だけの値動きで追わず、出来高と無効化水準も併せて確認します。",
+    },
+    20: {
+      label: "中長期の買い場",
+      future_label: "20営業日先",
+      holding_period: "数週間〜数か月",
+      purpose: "長期保有を始める前に、中期トレンドと底固めを確認します。",
+      caution: "企業価値は評価しないため、業績・財務は別に確認します。",
+    },
+  };
+
+  function updateHorizonGuide(profile = horizonProfiles[selectedHorizon]) {
+    horizonGuideTitle.textContent = `${profile.label}・${profile.future_label}`;
+    horizonGuideHolding.textContent = profile.holding_period;
+    horizonGuidePurpose.textContent = profile.purpose;
+    horizonGuideCaution.textContent = profile.caution;
+  }
 
   function setSidebarCollapsed(collapsed) {
     body.classList.toggle("sidebar-collapsed", collapsed);
@@ -232,6 +260,8 @@
       return;
     }
     predictionElement.className = "analysis-result";
+    const horizonProfile = payload.horizon_profile || horizonProfiles[selectedHorizon];
+    updateHorizonGuide(horizonProfile);
     const decision = payload.investment_decision || {
       action: "watch",
       evidence_score: payload.scores[payload.direction],
@@ -296,6 +326,24 @@
     const reasons = decision.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
     const cautions = decision.cautions.map((caution) => `<li>${escapeHtml(caution)}</li>`).join("");
     const transition = payload.transition_readiness;
+    const positionRiskPerShare = transition
+      ? Number(transition.current_price) - Number(transition.invalidation_price)
+      : Number.NaN;
+    const positionSizePanel = Number.isFinite(positionRiskPerShare) && positionRiskPerShare > 0
+      ? `<section class="position-size-calculator" data-current-price="${transition.current_price}" data-invalidation-price="${transition.invalidation_price}">
+          <div><span>ポジションサイズ計算</span><strong>許容損失から購入上限を確認</strong></div>
+          <label>この取引で許容する損失額
+            <span><input class="position-risk-input" type="number" min="0" step="1000" inputmode="numeric" placeholder="例：50000"> 円</span>
+          </label>
+          <dl>
+            <div><dt>1株あたりリスク</dt><dd>${formatPrice(positionRiskPerShare)}円</dd></div>
+            <div><dt>理論上限</dt><dd class="position-theoretical">—</dd></div>
+            <div><dt>100株単位の参考上限</dt><dd class="position-lot-size">—</dd></div>
+            <div><dt>必要資金の目安</dt><dd class="position-capital">—</dd></div>
+          </dl>
+          <p>手数料、スリッページ、ギャップ損失は含みません。購入推奨株数ではありません。銘柄ごとの実際の売買単位も注文前に確認してください。</p>
+        </section>`
+      : "";
     const transitionConditions = transition ? transition.conditions.map((condition) => `
       <li class="transition-condition ${condition.satisfied ? "satisfied" : "pending"}">
         <span aria-hidden="true">${condition.satisfied ? "✓" : "○"}</span>
@@ -325,11 +373,12 @@
         <ul>${reasons}</ul>
       </section>
       ${transitionPanel}
+      ${positionSizePanel}
       <div class="analysis-summary">
         <div><span>テクニカル方向</span><strong class="decision ${payload.direction}">${directionLabels[payload.direction]}</strong></div>
-        <small>基準日 ${payload.as_of_date} ・ ${payload.engine.id} v${payload.engine.version}</small>
+        <small>${escapeHtml(horizonProfile.label)}・${escapeHtml(horizonProfile.future_label)} ／ 基準日 ${payload.as_of_date} ・ ${payload.engine.id} v${payload.engine.version}</small>
       </div>
-      <p class="direction-explanation">テクニカル方向は現在の値動き、投資検討区分は出来高・決算・市場環境も含む判断です。上昇でも確認不足なら「様子見」になります。</p>
+      <p class="direction-explanation">${escapeHtml(horizonProfile.purpose)} テクニカル方向は価格の向き、投資検討区分は出来高・決算・市場環境も含む判断です。</p>
       <div class="probability-grid">${scores}</div>
       <h4>チャートパターンと現在の有効性</h4>
       <div class="pattern-list">${patterns}</div>
@@ -337,8 +386,33 @@
       <ul class="check-list">${checks}</ul>
       <h4>判定要因</h4>
       <ul class="factor-list">${factors}</ul>
+      <aside class="engine-validation-status">
+        <div><span>エンジン信頼度レポート</span><strong>検証実績は未生成</strong></div>
+        <p>勝率・プロフィットファクター・最大ドローダウンは、時系列のウォークフォワード検証を保存した後に表示します。根拠の強さは過去成績ではありません。</p>
+      </aside>
       <details class="caution-list"><summary>未評価項目と注意事項</summary><ul>${cautions}</ul></details>
       <p class="analysis-disclaimer">各スコアは適用されたルールの重みを正規化した参考値で、上昇・停滞・下落の確率ではありません。</p>`;
+    const sizeCalculator = predictionElement.querySelector(".position-size-calculator");
+    const riskInput = sizeCalculator?.querySelector(".position-risk-input");
+    riskInput?.addEventListener("input", () => {
+      const allowedLoss = Number(riskInput.value);
+      const currentPrice = Number(sizeCalculator.dataset.currentPrice);
+      const invalidationPrice = Number(sizeCalculator.dataset.invalidationPrice);
+      const riskPerShare = currentPrice - invalidationPrice;
+      const theoretical = allowedLoss > 0 && riskPerShare > 0
+        ? Math.floor(allowedLoss / riskPerShare)
+        : 0;
+      const lotSize = Math.floor(theoretical / 100) * 100;
+      sizeCalculator.querySelector(".position-theoretical").textContent = theoretical
+        ? `${theoretical.toLocaleString("ja-JP")}株`
+        : "—";
+      sizeCalculator.querySelector(".position-lot-size").textContent = lotSize
+        ? `${lotSize.toLocaleString("ja-JP")}株`
+        : "100株未満";
+      sizeCalculator.querySelector(".position-capital").textContent = lotSize
+        ? `${Math.ceil(lotSize * currentPrice).toLocaleString("ja-JP")}円`
+        : "—";
+    });
   }
 
   function selectInstrument(button) {
@@ -354,6 +428,12 @@
     });
     loadChart();
     loadPrediction();
+  }
+
+  function reloadWithSelectedSymbol(symbol) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("symbol", symbol);
+    window.location.assign(url.toString());
   }
 
   document.querySelectorAll(".watchlist-item").forEach((button) => {
@@ -491,8 +571,12 @@
         button.querySelector("[aria-hidden='true']").textContent = payload.pending?.length ? "…" : "✓";
         button.title = payload.pending?.length ? "銘柄確認待ち" : "ウォッチリスト追加済み";
         message.classList.add("success");
-        message.textContent = `${payload.message}。画面を更新します…`;
-        window.setTimeout(() => window.location.reload(), 700);
+        message.textContent = payload.pending?.length
+          ? `${payload.message}。銘柄マスタ同期後に分析できます。`
+          : `${payload.message}。保存済みの日足から分析を表示します…`;
+        if (!payload.pending?.length) {
+          window.setTimeout(() => reloadWithSelectedSymbol(button.dataset.symbol), 700);
+        }
       } catch (error) {
         button.disabled = false;
         button.classList.remove("is-loading");
@@ -523,8 +607,12 @@
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "登録できませんでした");
       message.classList.add("success");
-      message.textContent = payload.message;
-      window.setTimeout(() => window.location.reload(), 900);
+      message.textContent = payload.added?.length
+        ? `${payload.message}。保存済みの日足から分析を表示します…`
+        : payload.message;
+      if (payload.added?.length) {
+        window.setTimeout(() => reloadWithSelectedSymbol(payload.added[0]), 900);
+      }
     } catch (error) {
       message.classList.add("error");
       message.textContent = error.message;
@@ -573,7 +661,9 @@
       selectedHorizon = Number(button.dataset.horizon);
       document.querySelectorAll(".horizon-controls button").forEach((item) => {
         item.classList.toggle("active", item === button);
+        item.setAttribute("aria-pressed", String(item === button));
       });
+      updateHorizonGuide();
       loadPrediction();
     });
   });
@@ -586,5 +676,6 @@
   });
 
   const initialButton = document.querySelector(`.watchlist-item[data-symbol="${CSS.escape(selectedSymbol)}"]`);
+  updateHorizonGuide();
   if (initialButton) selectInstrument(initialButton);
 })();

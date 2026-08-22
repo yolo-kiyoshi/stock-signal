@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from statistics import fmean, median
 
+from stock_signal.analysis.horizons import HorizonProfile, get_horizon_profile
+from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.domain.analysis import (
     AnalysisContext,
     Direction,
@@ -14,16 +16,6 @@ from stock_signal.domain.analysis import (
     TransitionReadiness,
 )
 from stock_signal.domain.market_data import DailyBar
-
-
-def _atr(bars: Sequence[DailyBar], window: int = 20) -> float:
-    true_ranges = []
-    for index in range(len(bars) - window, len(bars)):
-        previous_close = float(bars[index - 1].close)
-        high = float(bars[index].high)
-        low = float(bars[index].low)
-        true_ranges.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
-    return fmean(true_ranges)
 
 
 def _local_troughs(values: Sequence[float]) -> list[int]:
@@ -38,12 +30,12 @@ def _local_troughs(values: Sequence[float]) -> list[int]:
 class TransitionReadinessEvaluator:
     """底固めから初動までを、説明可能な条件の進捗として評価する。"""
 
-    stability_days = 5
-    near_trigger_atr = 0.5
-    maximum_post_trigger_atr = 1.0
-    breakout_atr = 0.1
-    volume_ratio_threshold = 1.5
-    earnings_buffer_days = 5
+    maximum_below_trigger_atr = 0.2
+    maximum_above_trigger_atr = 0.1
+    initial_volume_ratio_threshold = 1.2
+    minimum_pattern_height_atr = 0.5
+    invalidation_atr = 0.5
+    invalidation_buffer_atr = 0.1
 
     def evaluate(
         self,
@@ -52,40 +44,58 @@ class TransitionReadinessEvaluator:
         lifecycles: Sequence[PatternLifecycleAssessment],
         direction: Direction,
         context: AnalysisContext,
+        horizon_days: int,
     ) -> TransitionReadiness:
+        profile = get_horizon_profile(horizon_days)
         ordered = tuple(sorted(bars, key=lambda bar: bar.trade_date))
-        if len(ordered) < 21:
-            raise ValueError("転換準備度の評価には21営業日以上の日足が必要です")
+        if len(ordered) < profile.minimum_bars:
+            raise ValueError(
+                f"{profile.label}の転換準備度には"
+                f"{profile.minimum_bars}営業日以上の日足が必要です"
+            )
         closes = [float(bar.close) for bar in ordered]
         lows = [float(bar.low) for bar in ordered]
         current_close = closes[-1]
-        atr = _atr(ordered)
+        atr = wilder_atr(ordered)
+        if atr is None:
+            raise ValueError("ATRの計算に必要な日足が不足しています")
         risk_unit = max(atr, current_close * 0.005, 0.01)
         trigger_price, trigger_name, formation_low = self._trigger_level(
-            ordered, patterns
+            ordered, patterns, profile.trigger_lookback
         )
+        pattern_height = trigger_price - formation_low
+        pattern_height_atr = pattern_height / risk_unit
 
-        recent_lows = lows[-20:]
+        recent_lows = lows[-profile.stability_lookback:]
         low_position = recent_lows.index(min(recent_lows))
         days_since_low = len(recent_lows) - 1 - low_position
         stability = TransitionCondition(
             "low_stability",
             "安値更新の停止",
-            days_since_low >= self.stability_days,
+            days_since_low >= profile.stability_days,
             True,
             (
-                f"20日安値から{days_since_low}営業日経過しています"
+                f"{profile.stability_lookback}日安値から"
+                f"{days_since_low}営業日経過しています"
                 if days_since_low
-                else "本日20日安値を更新しており、底固めを確認できません"
+                else f"本日{profile.stability_lookback}日安値を更新しており、"
+                "底固めを確認できません"
             ),
             float(days_since_low),
-            float(self.stability_days),
+            float(profile.stability_days),
             "営業日",
         )
 
-        short_average = fmean(closes[-5:])
-        recent_momentum = (closes[-1] - closes[-4]) / risk_unit
-        prior_momentum = (closes[-4] - closes[-7]) / risk_unit
+        momentum_window = profile.recent_window
+        average_window = profile.recent_average_window
+        short_average = fmean(closes[-average_window:])
+        recent_momentum = (
+            closes[-1] - closes[-momentum_window - 1]
+        ) / risk_unit
+        prior_momentum = (
+            closes[-momentum_window - 1]
+            - closes[-momentum_window * 2 - 1]
+        ) / risk_unit
         short_trend_met = (
             current_close > short_average
             and recent_momentum >= 0
@@ -93,15 +103,16 @@ class TransitionReadinessEvaluator:
         )
         short_trend = TransitionCondition(
             "short_trend",
-            "短期モメンタム改善",
+            "短期モメンタム改善" if horizon_days <= 5 else "中期モメンタム改善",
             short_trend_met,
             True,
             (
-                f"終値は5日平均{short_average:.2f}を上回り、"
-                f"3日モメンタムは{recent_momentum:+.2f} ATRです"
+                f"終値は{average_window}日平均{short_average:.2f}を上回り、"
+                f"{momentum_window}日モメンタムは{recent_momentum:+.2f} ATRです"
                 if short_trend_met
-                else f"終値{current_close:.2f}、5日平均{short_average:.2f}、"
-                f"3日モメンタム{recent_momentum:+.2f} ATRを確認中です"
+                else f"終値{current_close:.2f}、{average_window}日平均"
+                f"{short_average:.2f}、{momentum_window}日モメンタム"
+                f"{recent_momentum:+.2f} ATRを確認中です"
             ),
             round(recent_momentum, 2),
             0.0,
@@ -110,9 +121,9 @@ class TransitionReadinessEvaluator:
 
         distance_to_trigger_atr = (trigger_price - current_close) / risk_unit
         near_trigger_met = (
-            -self.maximum_post_trigger_atr
+            -self.maximum_above_trigger_atr
             <= distance_to_trigger_atr
-            <= self.near_trigger_atr
+            <= self.maximum_below_trigger_atr
         )
         near_trigger = TransitionCondition(
             "near_trigger",
@@ -124,8 +135,24 @@ class TransitionReadinessEvaluator:
                 f"{distance_to_trigger_atr:+.2f} ATRです"
             ),
             round(distance_to_trigger_atr, 2),
-            self.near_trigger_atr,
-            "ATR以内",
+            self.maximum_below_trigger_atr,
+            "ATR下以内",
+        )
+
+        pattern_structure = TransitionCondition(
+            "pattern_structure",
+            "形成値幅の有効性",
+            pattern_height_atr >= self.minimum_pattern_height_atr,
+            True,
+            (
+                f"形成値幅は{pattern_height_atr:.2f} ATRです"
+                if pattern_height_atr >= self.minimum_pattern_height_atr
+                else f"形成値幅は{pattern_height_atr:.2f} ATRで、"
+                f"最低{self.minimum_pattern_height_atr:.1f} ATRに届きません"
+            ),
+            round(pattern_height_atr, 2),
+            self.minimum_pattern_height_atr,
+            "ATR以上",
         )
 
         bullish = [pattern for pattern in patterns if pattern.direction is Direction.UP]
@@ -136,31 +163,24 @@ class TransitionReadinessEvaluator:
             baseline_volume = median(prior_volumes)
             if baseline_volume > 0:
                 volume_ratio = ordered[-1].volume / baseline_volume
-        breakout_price = trigger_price + self.breakout_atr * risk_unit
-        price_confirmed = (
-            lead_bullish.breakout_atr is not None
-            and lead_bullish.breakout_atr >= self.breakout_atr
-            if lead_bullish
-            else current_close >= breakout_price
+        initial_volume_confirmed = (
+            volume_ratio is not None
+            and volume_ratio >= self.initial_volume_ratio_threshold
         )
-        volume_confirmed = (
-            volume_ratio is not None and volume_ratio >= self.volume_ratio_threshold
-        )
-        breakout_confirmation = TransitionCondition(
-            "breakout_confirmation",
-            "価格と出来高の転換確認",
-            price_confirmed and volume_confirmed,
+        initial_volume = TransitionCondition(
+            "initial_volume",
+            "初動出来高",
+            initial_volume_confirmed,
             True,
             (
-                f"終値{breakout_price:.2f}以上かつ出来高{self.volume_ratio_threshold:.1f}倍"
-                f"が必要です（現在{current_close:.2f}、"
-                f"{volume_ratio:.2f}倍）"
+                f"出来高は平常時の{volume_ratio:.2f}倍です。"
+                f"初動基準は{self.initial_volume_ratio_threshold:.1f}倍です"
                 if volume_ratio is not None
-                else f"終値{breakout_price:.2f}以上と出来高履歴の確認が必要です"
+                else "初動を確認できる出来高履歴が不足しています"
             ),
-            round(current_close, 4),
-            round(breakout_price, 4),
-            "円",
+            round(volume_ratio, 2) if volume_ratio is not None else None,
+            self.initial_volume_ratio_threshold,
+            "倍以上",
         )
 
         gap_atr = (
@@ -181,13 +201,16 @@ class TransitionReadinessEvaluator:
             stability,
             short_trend,
             near_trigger,
-            breakout_confirmation,
+            pattern_structure,
+            initial_volume,
             normal_gap,
         ]
-        market_condition = self._market_condition(context, ordered)
+        market_condition = self._market_condition(context, ordered, profile)
         if market_condition is not None:
             conditions.append(market_condition)
-        earnings_condition = self._earnings_condition(context, ordered)
+        earnings_condition = self._earnings_condition(
+            context, ordered, profile
+        )
         if earnings_condition is not None:
             conditions.append(earnings_condition)
 
@@ -200,16 +223,19 @@ class TransitionReadinessEvaluator:
             lifecycles,
             stability.satisfied,
             short_trend.satisfied,
-            breakout_confirmation.satisfied,
+            near_trigger.satisfied and initial_volume.satisfied,
             len(unsatisfied),
         )
         summary = self._summary(phase, unsatisfied)
 
         invalidation_price = max(
-            formation_low,
-            trigger_price - 0.5 * risk_unit,
+            0.01,
+            min(
+                formation_low,
+                trigger_price - self.invalidation_atr * risk_unit,
+            )
+            - self.invalidation_buffer_atr * risk_unit,
         )
-        pattern_height = max(trigger_price - formation_low, risk_unit)
         target_price = trigger_price + pattern_height
         downside = current_close - invalidation_price
         upside = target_price - current_close
@@ -222,6 +248,7 @@ class TransitionReadinessEvaluator:
             summary=summary,
             next_condition=unsatisfied[0] if unsatisfied else None,
             conditions=tuple(conditions),
+            current_price=round(current_close, 4),
             trigger_price=round(trigger_price, 4),
             invalidation_price=round(invalidation_price, 4),
             target_price=round(target_price, 4),
@@ -230,7 +257,9 @@ class TransitionReadinessEvaluator:
 
     @staticmethod
     def _trigger_level(
-        bars: Sequence[DailyBar], patterns: Sequence[PatternDetection]
+        bars: Sequence[DailyBar],
+        patterns: Sequence[PatternDetection],
+        trigger_lookback: int,
     ) -> tuple[float, str, float]:
         bullish = [pattern for pattern in patterns if pattern.direction is Direction.UP]
         if bullish:
@@ -248,36 +277,43 @@ class TransitionReadinessEvaluator:
             if 5 <= right - left <= 35 and similarity <= 0.05:
                 neckline = max(highs[left:right + 1])
                 return neckline, "仮ネックライン", min(lows[left], lows[right])
-        recent = bars[-11:-1]
+        recent = bars[-trigger_lookback - 1:-1]
         return (
             max(float(bar.high) for bar in recent),
-            "直近10日高値",
+            f"直近{trigger_lookback}日高値",
             min(float(bar.low) for bar in recent),
         )
 
     @staticmethod
     def _market_condition(
-        context: AnalysisContext, bars: Sequence[DailyBar]
+        context: AnalysisContext,
+        bars: Sequence[DailyBar],
+        profile: HorizonProfile,
     ) -> TransitionCondition | None:
         market = [
             bar for bar in context.market_bars if bar.trade_date <= bars[-1].trade_date
         ]
-        if len(market) < 21:
+        if len(market) <= profile.market_window:
             return None
-        change = float(market[-1].close / market[-21].close - 1) * 100
+        change = float(
+            market[-1].close / market[-profile.market_window - 1].close - 1
+        ) * 100
         return TransitionCondition(
             "market_environment",
             "市場環境",
-            change >= -2.0,
+            change >= profile.market_minimum_return_percent,
             True,
-            f"TOPIXの20営業日騰落率は{change:+.2f}%です",
+            f"TOPIXの{profile.market_window}営業日騰落率は{change:+.2f}%です",
             round(change, 2),
-            -2.0,
+            profile.market_minimum_return_percent,
             "%以上",
         )
 
+    @staticmethod
     def _earnings_condition(
-        self, context: AnalysisContext, bars: Sequence[DailyBar]
+        context: AnalysisContext,
+        bars: Sequence[DailyBar],
+        profile: HorizonProfile,
     ) -> TransitionCondition | None:
         if not context.earnings_synced or context.next_earnings_date is None:
             return None
@@ -285,11 +321,11 @@ class TransitionReadinessEvaluator:
         return TransitionCondition(
             "earnings_buffer",
             "決算までの余裕",
-            days < 0 or days > self.earnings_buffer_days,
+            days < 0 or days > profile.earnings_exclusion_days,
             True,
             f"次回決算予定まで{days}日です",
             float(days),
-            float(self.earnings_buffer_days),
+            float(profile.earnings_exclusion_days),
             "日超",
         )
 

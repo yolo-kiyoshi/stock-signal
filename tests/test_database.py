@@ -29,6 +29,7 @@ from stock_signal.database import (
     remove_watchlist_item,
     replace_earnings_calendar,
     replace_instruments,
+    search_instruments,
     request_watchlist_registration,
     sqlite_path,
     update_watchlist_registration,
@@ -388,6 +389,38 @@ def test_instrument_master_and_positions_are_managed_independently(database_url)
 
     assert positions[0].symbol == "7203"
     assert positions[0].latest_close == Decimal("2830")
+
+
+def test_delisted_instrument_keeps_historical_daily_bars(database_url) -> None:
+    replace_instruments(
+        database_url,
+        "jquants",
+        [{
+            "symbol": "9999",
+            "provider": "jquants",
+            "display_name": "上場廃止試験銘柄",
+            "english_name": None,
+            "market": "プライム",
+            "sector_17_code": "9",
+            "sector_17_name": "その他",
+            "sector_33_code": "9999",
+            "sector_33_name": "その他",
+            "instrument_type": "stock",
+            "is_active": True,
+            "as_of_date": date(2026, 8, 14),
+        }],
+    )
+    bar = _bar(
+        symbol="9999",
+        provider="jquants",
+        is_adjusted=True,
+    )
+    upsert_daily_bars(database_url, [bar])
+
+    replace_instruments(database_url, "jquants", [])
+
+    assert search_instruments(database_url, "9999") == []
+    assert load_daily_bars(database_url, "9999", provider="jquants") == [bar]
     assert list_watchlist_items(database_url) == []
     assert {item.name for item in list_watchlists(database_url)} == {"ウォッチ"}
     assert remove_position(database_url, "7203") is True

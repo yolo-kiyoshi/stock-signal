@@ -2,6 +2,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from stock_signal.analysis.engine import RuleBasedAnalysisEngine
+from stock_signal.analysis.indicators import wilder_atr
+from stock_signal.analysis.market_relative import calculate_market_relative_metrics
 from stock_signal.analysis.patterns import TechnicalPatternDetector
 from stock_signal.domain.analysis import (
     AnalysisContext,
@@ -111,6 +113,32 @@ def test_insufficient_data_is_explicit() -> None:
     assert "最低25営業日" in result.message
 
 
+def test_position_style_uses_longer_windows_than_swing() -> None:
+    prices = [100 + index * 0.4 for index in range(100)]
+    bars = make_bars(prices)
+
+    swing = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
+    position = RuleBasedAnalysisEngine().analyze("TEST", bars, 20)
+
+    swing_descriptions = " ".join(factor.description for factor in swing.factors)
+    position_descriptions = " ".join(factor.description for factor in position.factors)
+    assert "5日線が20日線" in swing_descriptions
+    assert "直近3営業日" in swing_descriptions
+    assert "20日線が60日線" in position_descriptions
+    assert "直近10営業日" in position_descriptions
+    assert "直近60営業日の騰落率" in position_descriptions
+    assert any(factor.name == "RSI（28日）" for factor in position.factors)
+
+
+def test_position_style_requires_longer_history() -> None:
+    result = RuleBasedAnalysisEngine().analyze(
+        "TEST", make_bars([100 + index * 0.2 for index in range(60)]), 20
+    )
+
+    assert result.status == "insufficient_data"
+    assert "中長期の買い場分析には最低70営業日" in result.message
+
+
 def test_flat_prices_are_judged_as_flat() -> None:
     prices = [100 + ((index % 4) - 2) * 0.05 for index in range(40)]
     bars = make_bars(
@@ -154,6 +182,32 @@ def test_confirmed_rectangle_breakout_becomes_buy_candidate() -> None:
     assert result.patterns[0].breakout_atr is not None
     assert result.patterns[0].breakout_atr >= 0.1
     assert result.pattern_lifecycles[0].status is PatternLifecycleStatus.ENTRY_WINDOW
+
+
+def test_breakout_levels_keep_the_breakout_day_atr() -> None:
+    bars = make_rectangle_breakout(direction=Direction.UP)
+    initial = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
+    latest = bars[-1]
+    bars.append(DailyBar(
+        symbol=latest.symbol,
+        trade_date=latest.trade_date + timedelta(days=1),
+        open=Decimal("104"),
+        high=Decimal("150"),
+        low=Decimal("50"),
+        close=Decimal("104"),
+        volume=1000,
+        provider=latest.provider,
+        is_adjusted=latest.is_adjusted,
+    ))
+
+    after_volatility = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
+
+    assert initial.pattern_lifecycles[0].invalidation_price == (
+        after_volatility.pattern_lifecycles[0].invalidation_price
+    )
+    assert initial.pattern_lifecycles[0].target_price == (
+        after_volatility.pattern_lifecycles[0].target_price
+    )
 
 
 def test_breakout_is_an_event_and_recent_reversal_weakens_signal() -> None:
@@ -221,21 +275,21 @@ def test_transition_readiness_exposes_the_one_remaining_condition() -> None:
 
     assert transition is not None
     assert transition.phase is TransitionPhase.ONE_GATE_REMAINING
-    assert transition.satisfied_conditions == 4
-    assert transition.total_conditions == 5
-    assert transition.readiness_score == 80.0
+    assert transition.satisfied_conditions == 5
+    assert transition.total_conditions == 6
+    assert transition.readiness_score == 83.3
     assert transition.next_condition is not None
-    assert transition.next_condition.key == "breakout_confirmation"
+    assert transition.next_condition.key == "initial_volume"
     assert result.investment_decision is not None
     assert result.investment_decision.action is InvestmentAction.WATCH
     assert "あと1つ" in result.investment_decision.summary
 
 
-def test_confirmed_transition_can_be_an_early_buy_candidate() -> None:
+def test_early_transition_is_distinct_from_completed_breakout() -> None:
     prices = (
         [120 - index * 0.8 for index in range(20)]
         + [104, 103, 102, 101, 100, 100.2, 100.4, 100.3, 100.5, 100.4]
-        + [100.5, 100.7, 101, 101.4, 102, 102.8, 103.7, 104.7, 105.8, 108]
+        + [100.5, 100.7, 101, 101.4, 102, 102.8, 103.7, 104.7, 105.8, 106.9]
     )
     volumes = [1000] * 39 + [2000]
 
@@ -254,11 +308,65 @@ def test_confirmed_transition_can_be_an_early_buy_candidate() -> None:
     assert transition.phase is TransitionPhase.EARLY_REVERSAL
     assert transition.satisfied_conditions == transition.total_conditions
     assert transition.risk_reward_ratio is not None
-    assert transition.risk_reward_ratio >= 1.5
+    assert transition.risk_reward_ratio > 0
     assert result.patterns == ()
     assert result.investment_decision is not None
-    assert result.investment_decision.action is InvestmentAction.BUY_CANDIDATE
-    assert "転換の初動" in result.investment_decision.summary
+    assert result.investment_decision.action is InvestmentAction.WATCH
+    assert "完成ブレイク" in result.investment_decision.summary
+
+
+def test_wilder_atr_smooths_a_large_true_range() -> None:
+    bars = make_bars([100.0] * 22)
+    shock = bars[20]
+    bars[20] = DailyBar(
+        symbol=shock.symbol,
+        trade_date=shock.trade_date,
+        open=shock.open,
+        high=Decimal("120"),
+        low=Decimal("80"),
+        close=shock.close,
+        volume=shock.volume,
+        provider=shock.provider,
+        is_adjusted=shock.is_adjusted,
+    )
+
+    seeded = wilder_atr(bars, end=21)
+    smoothed = wilder_atr(bars, end=22)
+
+    assert seeded is not None
+    assert smoothed is not None
+    assert round(seeded, 3) == 3.9
+    assert round(smoothed, 3) == 3.805
+
+
+def test_relative_strength_and_beta_use_common_trading_days() -> None:
+    stock_prices = [100.0]
+    market_prices = [100.0]
+    for index in range(20):
+        market_change = 0.01 if index % 2 == 0 else -0.005
+        stock_prices.append(stock_prices[-1] * (1 + 2 * market_change))
+        market_prices.append(market_prices[-1] * (1 + market_change))
+    stock = make_bars(stock_prices)
+    market = [
+        DailyBar(
+            symbol="TOPIX",
+            trade_date=bar.trade_date,
+            open=Decimal(str(price)),
+            high=Decimal(str(price + 1)),
+            low=Decimal(str(price - 1)),
+            close=Decimal(str(price)),
+            volume=0,
+            provider="jquants",
+            is_adjusted=False,
+        )
+        for bar, price in zip(stock, market_prices, strict=True)
+    ]
+
+    metrics = calculate_market_relative_metrics(stock, market, 20)
+
+    assert metrics is not None
+    assert metrics.beta == 2.0
+    assert metrics.relative_strength_percent > 0
 
 
 def test_gap_driven_breakout_requires_event_review() -> None:
@@ -321,10 +429,31 @@ def test_light_context_evaluates_topix_and_upcoming_earnings() -> None:
 
     checks = {check.key: check for check in result.equity_checks}
     assert checks["market_trend_score"].status.value == "evaluated"
+    assert checks["relative_strength"].status.value == "evaluated"
+    assert checks["beta_topix"].status.value == "evaluated"
     assert checks["days_to_earnings"].value == 3
     assert result.investment_decision is not None
     assert result.investment_decision.action is InvestmentAction.WATCH
     assert "決算" in result.investment_decision.summary
+
+
+def test_position_style_only_blocks_the_five_days_before_earnings() -> None:
+    bars = make_rectangle_breakout(direction=Direction.UP)
+    context = AnalysisContext(
+        next_earnings_date=bars[-1].trade_date + timedelta(days=10),
+        earnings_synced=True,
+        jquants_plan="light",
+    )
+
+    result = RuleBasedAnalysisEngine().analyze("TEST", bars, 20, context)
+    earnings = next(
+        check for check in result.equity_checks if check.key == "days_to_earnings"
+    )
+
+    assert earnings.status.value == "partial"
+    assert "警告表示にとどめます" in earnings.description
+    assert result.investment_decision is not None
+    assert result.investment_decision.action is InvestmentAction.BUY_CANDIDATE
 
 
 def test_stale_data_cannot_become_buy_candidate() -> None:

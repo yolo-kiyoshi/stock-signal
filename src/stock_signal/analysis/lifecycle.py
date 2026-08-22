@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from statistics import fmean
 
+from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.domain.analysis import (
     Direction,
     PatternDetection,
@@ -13,25 +13,13 @@ from stock_signal.domain.analysis import (
 from stock_signal.domain.market_data import DailyBar
 
 
-def _current_atr(bars: Sequence[DailyBar], window: int = 20) -> float | None:
-    """最新日を含むATRを計算する。"""
-    if len(bars) < window + 1:
-        return None
-    true_ranges: list[float] = []
-    for index in range(len(bars) - window, len(bars)):
-        previous_close = float(bars[index - 1].close)
-        high = float(bars[index].high)
-        low = float(bars[index].low)
-        true_ranges.append(max(high - low, abs(high - previous_close), abs(low - previous_close)))
-    return fmean(true_ranges)
-
-
 class PatternLifecycleEvaluator:
     """価格形状の検出後に、有効期間・失敗・目標到達を独立評価する。"""
 
     entry_window_days = 5
     maximum_monitoring_days = 20
     invalidation_atr = 0.5
+    invalidation_buffer_atr = 0.1
     weakening_atr = 0.5
 
     def evaluate(
@@ -67,29 +55,41 @@ class PatternLifecycleEvaluator:
         elapsed = len(bars) - 1 - breakout_index
         current_close = float(bars[-1].close)
         breakout_close = float(bars[breakout_index].close)
-        atr = _current_atr(bars)
+        current_atr = wilder_atr(bars)
+        breakout_atr = wilder_atr(bars, end=breakout_index)
         fallback_atr = max(current_close * 0.01, 0.01)
-        risk_unit = atr or fallback_atr
+        risk_unit = breakout_atr or current_atr or fallback_atr
         direction_sign = 1 if pattern.direction is Direction.UP else -1
 
         formation_length = max(20, pattern.duration_days + 5)
         formation = bars[max(0, breakout_index - formation_length):breakout_index]
         if pattern.direction is Direction.UP:
             extreme = min(float(bar.low) for bar in formation)
-            pattern_height = max(pattern.breakout_level - extreme, risk_unit)
+            pattern_height = pattern.breakout_level - extreme
+            invalidation_price = max(
+                0.01,
+                min(
+                    extreme,
+                    pattern.breakout_level - self.invalidation_atr * risk_unit,
+                )
+                - self.invalidation_buffer_atr * risk_unit,
+            )
         else:
             extreme = max(float(bar.high) for bar in formation)
-            pattern_height = max(extreme - pattern.breakout_level, risk_unit)
+            pattern_height = extreme - pattern.breakout_level
+            invalidation_price = max(
+                extreme,
+                pattern.breakout_level + self.invalidation_atr * risk_unit,
+            ) + self.invalidation_buffer_atr * risk_unit
+        if pattern_height <= 0:
+            return None
         target_price = pattern.breakout_level + direction_sign * pattern_height
-        invalidation_price = (
-            pattern.breakout_level - direction_sign * self.invalidation_atr * risk_unit
-        )
 
         recent_start = max(breakout_index, len(bars) - 4)
         recent_base = float(bars[recent_start].close)
         recent_momentum_atr = (
-            direction_sign * (current_close - recent_base) / atr
-            if atr is not None and atr > 0
+            direction_sign * (current_close - recent_base) / current_atr
+            if current_atr is not None and current_atr > 0
             else None
         )
         signed_target_distance = direction_sign * (current_close - target_price)

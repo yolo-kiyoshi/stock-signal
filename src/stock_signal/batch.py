@@ -279,7 +279,7 @@ class DailyBatchRunner:
     def _analysis_summary(self, symbol: str, provider: str) -> dict[str, object]:
         """日次実行時点の方向、投資検討区分、パターンを記録する。"""
         summary: dict[str, object] = {}
-        for horizon in (1, 5, 20):
+        for horizon in (5, 20):
             analysis = self.analysis_service.analyze_symbol(
                 symbol, horizon, provider
             )
@@ -353,6 +353,7 @@ class DailyBatchRunner:
                                         "description": transition.next_condition.description,
                                     }
                                 ),
+                                "current_price": transition.current_price,
                                 "trigger_price": transition.trigger_price,
                                 "invalidation_price": transition.invalidation_price,
                                 "target_price": transition.target_price,
@@ -469,7 +470,13 @@ class DailyBatchRunner:
             DAILY_BARS_ENDPOINT,
         )
         end = self.today()
-        start = latest + timedelta(days=1) if latest else end - timedelta(days=90)
+        if latest:
+            start = min(
+                latest + timedelta(days=1),
+                end - timedelta(days=14),
+            )
+        else:
+            start = end - timedelta(days=90)
         if start > end:
             results.append(BatchItemResult("@MARKET", "jquants", "no_updates"))
             return results
@@ -482,6 +489,7 @@ class DailyBatchRunner:
                 history_start=plan_history_start(
                     self.today(), self.settings.jquants_history_years
                 ),
+                refresh_completed=True,
             )
             results.append(
                 BatchItemResult(
@@ -523,7 +531,10 @@ class DailyBatchRunner:
             )
             end = self.today()
             start = (
-                latest + timedelta(days=1)
+                min(
+                    latest + timedelta(days=1),
+                    end - timedelta(days=14),
+                )
                 if latest
                 and data_sync_succeeded(
                     self.settings.database_url, history_dataset

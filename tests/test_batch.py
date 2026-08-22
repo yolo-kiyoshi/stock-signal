@@ -16,6 +16,7 @@ from stock_signal.database import (
     list_market_candidates,
     list_watchlist_items,
     load_daily_bars,
+    record_bulk_adjustment,
     record_bulk_file,
     record_data_sync,
     request_watchlist_registration,
@@ -96,6 +97,10 @@ class LightRecordingProvider(RecordingProvider):
 
 
 class UniverseRecordingProvider(LightRecordingProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bulk_list_calls = []
+
     def fetch_instrument_master(self, as_of):
         return [
             ListedInstrument(
@@ -113,6 +118,7 @@ class UniverseRecordingProvider(LightRecordingProvider):
         ]
 
     def list_bulk_files(self, endpoint, start, end):
+        self.bulk_list_calls.append((endpoint, start, end))
         return [BulkFile("daily-20260210", endpoint, date(2026, 2, 10))]
 
     def download_bulk_daily_bars(self, file_key):
@@ -132,6 +138,11 @@ class UniverseRecordingProvider(LightRecordingProvider):
 class EmptyUniverseRecordingProvider(UniverseRecordingProvider):
     def download_bulk_daily_bars(self, file_key):
         return []
+
+
+class AdjustedUniverseRecordingProvider(UniverseRecordingProvider):
+    def download_bulk_daily_bars(self, file_key):
+        return [make_bar("7203", date(2026, 2, 10), "jquants")]
 
 
 class SplitUniverseRecordingProvider(UniverseRecordingProvider):
@@ -210,11 +221,11 @@ def test_daily_batch_fetches_only_after_latest_date_and_records_run(database_url
     assert status == "success"
     assert finished_at is not None
     assert json.loads(summary_json) == {"succeeded": 2, "failed": 0}
-    assert result.items[0].analysis_summary.keys() == {"1", "5", "20"}
+    assert result.items[0].analysis_summary.keys() == {"5", "20"}
     assert result.items[0].analysis_summary["5"]["action"] in {
         "buy_candidate", "watch", "avoid_new_buy", "insufficient_data"
     }
-    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.0.0"
+    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.5.0"
 
 
 def test_failure_of_one_symbol_does_not_discard_other_symbol(database_url) -> None:
@@ -327,6 +338,41 @@ def test_light_batch_syncs_market_and_stores_screening(database_url) -> None:
     assert candidates[0]["transition_total"] >= 4
 
 
+def test_daily_market_sync_overwrites_recent_two_weeks(database_url) -> None:
+    endpoint = "/equities/bars/daily"
+    record_bulk_file(
+        database_url,
+        file_key="daily-20260208",
+        endpoint=endpoint,
+        target_date=date(2026, 2, 8),
+        status="success",
+        row_count=1,
+    )
+    record_bulk_adjustment(
+        database_url,
+        "daily-20260208",
+        "success",
+        row_count=1,
+    )
+    provider = UniverseRecordingProvider()
+    settings = Settings(
+        database_url=database_url,
+        jquants_api_key="test-key",
+        jquants_plan="light",
+    )
+
+    DailyBatchRunner(
+        settings,
+        provider_factory=lambda _: provider,
+        today=lambda: date(2026, 2, 10),
+    ).run()
+
+    assert provider.bulk_list_calls[0][1:] == (
+        date(2026, 1, 27),
+        date(2026, 2, 10),
+    )
+
+
 def test_daily_batch_reports_incomplete_historical_bulk_files(database_url) -> None:
     endpoint = "/equities/bars/daily"
     record_bulk_file(
@@ -398,3 +444,59 @@ def test_incremental_split_refreshes_symbol_history(database_url) -> None:
     assert summary["refreshed_symbols"] == 1
     assert provider.calls == [("7203", date(2021, 2, 11), date(2026, 2, 10))]
     assert len(load_daily_bars(database_url, "7203", provider="jquants")) == 2
+
+
+def test_completed_bulk_file_can_be_forcibly_refreshed(database_url) -> None:
+    provider = AdjustedUniverseRecordingProvider()
+
+    first = sync_bulk_daily_bars(
+        database_url,
+        provider,
+        date(2026, 2, 10),
+        date(2026, 2, 10),
+    )
+    skipped = sync_bulk_daily_bars(
+        database_url,
+        provider,
+        date(2026, 2, 10),
+        date(2026, 2, 10),
+    )
+    refreshed = sync_bulk_daily_bars(
+        database_url,
+        provider,
+        date(2026, 2, 10),
+        date(2026, 2, 10),
+        refresh_completed=True,
+    )
+
+    assert first["rows"] == 1
+    assert skipped["skipped"] == 1
+    assert refreshed["skipped"] == 0
+    assert refreshed["rows"] == 1
+
+
+def test_failed_overlap_refresh_keeps_the_last_good_checkpoint(database_url) -> None:
+    provider = AdjustedUniverseRecordingProvider()
+    sync_bulk_daily_bars(
+        database_url,
+        provider,
+        date(2026, 2, 10),
+        date(2026, 2, 10),
+    )
+
+    failed = sync_bulk_daily_bars(
+        database_url,
+        EmptyUniverseRecordingProvider(),
+        date(2026, 2, 10),
+        date(2026, 2, 10),
+        refresh_completed=True,
+    )
+    retried = sync_bulk_daily_bars(
+        database_url,
+        provider,
+        date(2026, 2, 10),
+        date(2026, 2, 10),
+    )
+
+    assert failed["failed"] == 1
+    assert retried["skipped"] == 1
