@@ -329,7 +329,8 @@ TOPIXはLightの四本値からスイングでは20営業日、中長期では60
 使用しない。購入候補も自動発注条件ではない。自動取引へ進む際は、市場・業種・イベント評価、
 リスク上限、取引コスト、ペーパートレードを別の必須ゲートとする。
 
-初学者向けの計算式、状態遷移、研究根拠は`docs/investment-judgment-guide.md`に記載する。
+株式投資の初学者向け基礎教材は`docs/technical-analysis-foundations.md`、実装の計算式、状態遷移、
+研究根拠は`docs/investment-judgment-guide.md`に記載する。
 
 ### 交換可能性
 
