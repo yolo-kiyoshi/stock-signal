@@ -101,7 +101,24 @@ docker compose run --rm app stock-signal list-symbols
 
 # 単独HTMLレポートの生成
 docker compose run --rm app stock-signal chart TM --output-dir /app/reports
+
+# 直近1年の過去当てはめ実績HTMLを生成
+docker compose run --rm app stock-signal historical-report 7203 \
+  --output-dir /app/reports
+
+# 判定期間を指定して生成
+docker compose run --rm app stock-signal historical-report 7203 \
+  --from 2024-01-01 --to 2025-12-31 --output-dir /app/reports
 ```
+
+`historical-report`は画面機能ではなく、実行のたびに`reports/`へ単独HTMLを出力するCLIです。
+期間未指定時は保存済みの最新日足を基準に直近1年を対象とします。各取引日について、その日以前の
+日足だけでスイング5日と中長期20日を再判定し、実績方向、一致・不一致、騰落率、ATR換算値を
+一覧化します。外部APIは呼ばず、PostgreSQLに保存済みの調整済み日足だけを読み取ります。
+
+実績は5または20番目の後続取引日の終値で照合し、判定日時点のWilder ATRに対してスイングは
+±0.5 ATR、中長期は±1.0 ATR以上を上昇・下落、その内側を停滞と分類します。レポートの
+「方向一致率」は3分類の当てはまりであり、売買戦略の勝率、利益率、将来確率ではありません。
 
 ## Alpha Vantage APIキー
 

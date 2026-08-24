@@ -7,12 +7,15 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from pathlib import Path
 
+from stock_signal.analysis.historical_validation import HistoricalValidationService
 from stock_signal.batch import BatchAlreadyRunningError, DailyBatchRunner, result_as_json
 from stock_signal.charts.candlestick import render_candlestick_report
+from stock_signal.charts.historical_fit import render_historical_fit_report
 from stock_signal.config import ConfigurationError, Settings, plan_history_start
 from stock_signal.database import (
     add_watchlist_item,
     bulk_sync_status,
+    get_instruments_by_symbols,
     initialize_database,
     list_bulk_sync_issues,
     list_stored_symbols,
@@ -94,6 +97,34 @@ def build_parser() -> argparse.ArgumentParser:
     chart_parser = subparsers.add_parser("chart", help="ローソク足HTMLレポートを生成する")
     chart_parser.add_argument("symbol", help="保存済みの取得元固有銘柄記号")
     chart_parser.add_argument("--output-dir", type=Path, default=Path("reports"))
+
+    historical_report_parser = subparsers.add_parser(
+        "historical-report",
+        help="スイング・中長期の過去当てはめ実績HTMLを生成する",
+    )
+    historical_report_parser.add_argument("symbol", help="保存済みの4文字の証券コード")
+    historical_report_parser.add_argument(
+        "--provider",
+        default="jquants",
+        help="保存済みデータの取得元（既定: jquants）",
+    )
+    historical_report_parser.add_argument(
+        "--from",
+        dest="start",
+        type=date.fromisoformat,
+        help="判定期間の開始日（YYYY-MM-DD、未指定時は直近1年）",
+    )
+    historical_report_parser.add_argument(
+        "--to",
+        dest="end",
+        type=date.fromisoformat,
+        help="判定期間の終了日（YYYY-MM-DD）",
+    )
+    historical_report_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("reports"),
+    )
 
     daily_parser = subparsers.add_parser("daily", help="日次分析パイプラインを実行する")
     daily_parser.add_argument(
@@ -308,6 +339,37 @@ def _run_command(args: argparse.Namespace, settings: Settings) -> int:
         )
         output_path = render_candlestick_report(bars, args.output_dir)
         print(f"ローソク足レポートを生成しました: {output_path}")
+        return 0
+
+    if args.command == "historical-report":
+        service = HistoricalValidationService(
+            settings.database_url,
+            jquants_plan=settings.jquants_plan,
+        )
+        points = service.validate_range(
+            args.symbol,
+            start=args.start,
+            end=args.end,
+            provider=args.provider,
+            on_progress=lambda completed, total, as_of: print(
+                f"過去当てはめを検証中: {completed}/{total}（{as_of}）",
+                file=sys.stderr,
+                flush=True,
+            ),
+        )
+        instruments = get_instruments_by_symbols(
+            settings.database_url,
+            [args.symbol],
+            provider=args.provider,
+        )
+        output_path = render_historical_fit_report(
+            args.symbol,
+            args.provider,
+            points,
+            args.output_dir,
+            display_name=(instruments[0].display_name if instruments else None),
+        )
+        print(f"過去当てはめ実績レポートを生成しました: {output_path}")
         return 0
 
     if args.command == "daily":
