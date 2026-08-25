@@ -22,6 +22,9 @@ def test_defaults(monkeypatch) -> None:
         "JQUANTS_PLAN",
         "SLACK_WEBHOOK_URL",
         "MARKET_SCREENING_LIMIT",
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "OPENAI_MAX_OUTPUT_TOKENS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -38,6 +41,16 @@ def test_defaults(monkeypatch) -> None:
     assert settings.jquants_history_years == 5
     assert settings.jquants_data_delay_days == 0
     assert settings.market_screening_limit == 500
+    assert settings.openai_api_key is None
+    assert settings.openai_model == "gpt-5.5"
+    assert settings.openai_max_output_tokens == 6_000
+
+
+def test_invalid_openai_output_limit(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_MAX_OUTPUT_TOKENS", "1000")
+
+    with pytest.raises(ConfigurationError, match="OPENAI_MAX_OUTPUT_TOKENS"):
+        Settings.from_env()
 
 
 def test_invalid_boolean(monkeypatch) -> None:
@@ -63,10 +76,12 @@ def test_safe_dict_does_not_reveal_secrets(monkeypatch) -> None:
     monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "secret-key")
     monkeypatch.setenv("JQUANTS_API_KEY", "jquants-secret")
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.invalid/secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
 
     safe_settings = Settings.from_env().safe_dict()
 
     assert safe_settings["alpha_vantage_api_key"] == "configured"
     assert safe_settings["jquants_api_key"] == "configured"
     assert safe_settings["slack_webhook_url"] == "configured"
+    assert safe_settings["openai_api_key"] == "configured"
     assert "secret" not in repr(safe_settings)

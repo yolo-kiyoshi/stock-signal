@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from threading import Lock
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -13,7 +14,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from plotly.offline import get_plotlyjs
 
+from stock_signal.ai_review import (
+    InvestmentReviewError,
+    OpenAIInvestmentReviewService,
+    review_text_segments,
+)
 from stock_signal.analysis.horizons import get_horizon_profile
+from stock_signal.analysis.indicators import (
+    resistance_bands,
+    simple_moving_average_series,
+    wilder_rsi_series,
+)
 from stock_signal.analysis.service import AnalysisService
 from stock_signal.config import Settings
 from stock_signal.database import (
@@ -43,6 +54,7 @@ settings = Settings.from_env()
 analysis_service = AnalysisService(
     settings.database_url, jquants_plan=settings.jquants_plan
 )
+ai_review_lock = Lock()
 
 
 @asynccontextmanager
@@ -56,7 +68,7 @@ app = FastAPI(
     description=(
         "保有銘柄、ウォッチリスト、市場全体候補の日足と分析情報を確認するアプリケーション"
     ),
-    version="0.7.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 
@@ -69,6 +81,14 @@ TRANSITION_PHASE_LABELS = {
     "uptrend": "上昇継続",
     "caution": "警戒",
     "unknown": "未評価",
+}
+POSITION_ENTRY_PHASE_LABELS = {
+    "pullback_candidate": "押し目反発を確認",
+    "support_test": "支持候補を試す",
+    "approaching_support": "支持候補へ接近",
+    "trend_extended": "支持帯から上方乖離",
+    "trend_broken": "中期トレンド未維持",
+    "no_setup": "押し目条件なし",
 }
 app.mount("/static", StaticFiles(directory=WEB_DIRECTORY / "static"), name="static")
 
@@ -216,6 +236,7 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
         }
 
     transition = result.transition_readiness
+    position_entry = result.position_entry
 
     def serialize_condition(condition):
         return {
@@ -279,6 +300,51 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
             "invalidation_price": transition.invalidation_price,
             "target_price": transition.target_price,
             "risk_reward_ratio": transition.risk_reward_ratio,
+            "score_is_probability": False,
+        },
+        "position_entry": None if position_entry is None else {
+            "phase": position_entry.phase.value,
+            "phase_label": POSITION_ENTRY_PHASE_LABELS[position_entry.phase.value],
+            "satisfied_conditions": position_entry.satisfied_conditions,
+            "total_conditions": position_entry.total_conditions,
+            "readiness_score": position_entry.readiness_score,
+            "summary": position_entry.summary,
+            "next_condition": (
+                None
+                if position_entry.next_condition is None
+                else {
+                    "key": position_entry.next_condition.key,
+                    "label": position_entry.next_condition.label,
+                    "satisfied": position_entry.next_condition.satisfied,
+                    "description": position_entry.next_condition.description,
+                }
+            ),
+            "conditions": [
+                {
+                    "key": condition.key,
+                    "label": condition.label,
+                    "satisfied": condition.satisfied,
+                    "description": condition.description,
+                }
+                for condition in position_entry.conditions
+            ],
+            "supports": [
+                {
+                    "key": support.key,
+                    "label": support.label,
+                    "level": support.level,
+                    "lower": support.lower,
+                    "upper": support.upper,
+                    "distance_atr": support.distance_atr,
+                    "touched": support.touched,
+                    "held": support.held,
+                    "description": support.description,
+                }
+                for support in position_entry.supports
+            ],
+            "current_price": position_entry.current_price,
+            "atr": position_entry.atr,
+            "invalidation_price": position_entry.invalidation_price,
             "score_is_probability": False,
         },
         "patterns": [
@@ -410,6 +476,8 @@ def dashboard(
             "selected_symbol": selected_symbol,
             "selected_provider": selected_provider,
             "latest_date": latest_date,
+            "openai_review_available": bool(settings.openai_api_key),
+            "openai_model": settings.openai_model,
         },
     )
 
@@ -768,6 +836,8 @@ def daily_bars(
             detail="指定された銘柄の日足データがありません",
         )
 
+    resolved_provider = provider or all_bars[-1].provider
+    all_bars = [bar for bar in all_bars if bar.provider == resolved_provider]
     latest_date = all_bars[-1].trade_date
     if to_date is None:
         to_date = latest_date
@@ -786,6 +856,40 @@ def daily_bars(
 
     bars = [bar for bar in all_bars if from_date <= bar.trade_date <= to_date]
     source_bar = bars[-1] if bars else all_bars[-1]
+    calculation_bars = [bar for bar in all_bars if bar.trade_date <= to_date]
+    calculation_index = {
+        bar.trade_date: index for index, bar in enumerate(calculation_bars)
+    }
+
+    def visible_values(values: tuple[float | None, ...]) -> list[float | None]:
+        visible = [values[calculation_index[bar.trade_date]] for bar in bars]
+        return [round(value, 4) if value is not None else None for value in visible]
+
+    moving_averages = {
+        str(window): visible_values(
+            simple_moving_average_series(calculation_bars, window)
+        )
+        for window in (5, 20, 60)
+    }
+    rsi_values = {
+        str(window): visible_values(wilder_rsi_series(calculation_bars, window))
+        for window in (14, 28)
+    }
+
+    def serialize_resistance(lookback: int) -> list[dict[str, object]]:
+        return [
+            {
+                "lower": band.lower,
+                "upper": band.upper,
+                "center": band.center,
+                "touches": band.touches,
+                "first_touched": band.first_touched.isoformat(),
+                "last_touched": band.last_touched.isoformat(),
+                "distance_percent": band.distance_percent,
+            }
+            for band in resistance_bands(calculation_bars, lookback=lookback)
+        ]
+
     is_adjusted = all(
         bar.is_adjusted or bar.symbol == "TOPIX" for bar in all_bars
     )
@@ -800,6 +904,23 @@ def daily_bars(
         "freshness": {
             "latest_trade_date": latest_date.isoformat(),
             "status": "fresh" if latest_date == to_date else "historical",
+        },
+        "indicators": {
+            "moving_averages": moving_averages,
+            "rsi": rsi_values,
+            "resistance_bands": {
+                "60": serialize_resistance(60),
+                "120": serialize_resistance(120),
+            },
+            "definitions": {
+                "moving_average": "終値の単純移動平均",
+                "rsi": "Wilder平滑化RSI",
+                "resistance": (
+                    "局所高値をATRで集約した2回以上接触の候補帯。"
+                    "明確に上抜けた帯は除外"
+                ),
+                "score_is_probability": False,
+            },
         },
         "bars": [
             {
@@ -868,6 +989,137 @@ def latest_analysis(
             detail="指定された銘柄の日足データがありません",
         )
     return _serialize_analysis(result)
+
+
+@app.get("/api/v1/ai-investment-review/capability")
+def ai_investment_review_capability() -> dict[str, object]:
+    configured = bool(settings.openai_api_key)
+    return {
+        "status": "ready" if configured else "not_configured",
+        "enabled": configured,
+        "model": settings.openai_model,
+        "max_output_tokens": settings.openai_max_output_tokens,
+        "search": "openai_responses_web_search",
+        "message": (
+            "指定銘柄の最新関連情報を検索できます"
+            if configured
+            else "OPENAI_API_KEYを設定すると利用できます"
+        ),
+        "notice": (
+            "実行ごとにOpenAI APIとWeb検索の利用料金が"
+            "発生する場合があります"
+        ),
+    }
+
+
+@app.post("/api/v1/instruments/{symbol}/ai-investment-review")
+def create_ai_investment_review(
+    symbol: str,
+    horizon: int = Query(5),
+    provider: str | None = None,
+) -> dict[str, object]:
+    """指定銘柄のテクニカル結果を、最新の外部情報と照合する。"""
+    _validate_horizon(horizon)
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEYが未設定のため、AI最終確認を実行できません",
+        )
+    bars = load_daily_bars(settings.database_url, symbol, provider=provider)
+    if not bars:
+        raise HTTPException(
+            status_code=404,
+            detail="指定された銘柄の日足データがありません",
+        )
+    resolved_provider = provider or bars[-1].provider
+    result = analysis_service.analyze_symbol(symbol, horizon, resolved_provider)
+    instruments = get_instruments_by_symbols(
+        settings.database_url,
+        [symbol],
+        provider=resolved_provider,
+    )
+    display_name = instruments[0].display_name if instruments else symbol.upper()
+    serialized = _serialize_analysis(result, display_name)
+    technical_context = {
+        key: serialized[key]
+        for key in (
+            "symbol",
+            "display_name",
+            "as_of_date",
+            "horizon_days",
+            "horizon_profile",
+            "direction",
+            "scores",
+            "score_is_probability",
+            "factors",
+            "patterns",
+            "equity_checks",
+            "transition_readiness",
+            "position_entry",
+            "investment_decision",
+            "engine",
+        )
+    }
+    try:
+        service = OpenAIInvestmentReviewService(
+            settings.openai_api_key,
+            settings.openai_model,
+            max_output_tokens=settings.openai_max_output_tokens,
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OpenAI SDKを初期化できません。"
+                "Dockerイメージを再ビルドしてください"
+            ),
+        ) from error
+    if not ai_review_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="別のAI最終確認を実行中です。完了後に再実行してください",
+        )
+    try:
+        review = service.review(
+            symbol=result.symbol,
+            display_name=display_name,
+            horizon_days=horizon,
+            provider=resolved_provider,
+            technical_context=technical_context,
+        )
+    except InvestmentReviewError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        ai_review_lock.release()
+    return {
+        "status": "ready",
+        "symbol": review.symbol,
+        "display_name": review.display_name,
+        "horizon_days": review.horizon_days,
+        "technical_as_of_date": review.technical_as_of_date,
+        "generated_at": review.generated_at,
+        "model": review.model,
+        "response_id": review.response_id,
+        "search_performed": review.search_performed,
+        "report_text": review.report_text,
+        "report_segments": review_text_segments(
+            review.report_text,
+            review.citations,
+        ),
+        "citations": [
+            {
+                "start_index": citation.start_index,
+                "end_index": citation.end_index,
+                "url": citation.url,
+                "title": citation.title,
+            }
+            for citation in review.citations
+        ],
+        "notice": (
+            "AIによる補助分析であり、投資助言、利益保証、"
+            "自動注文ではありません"
+        ),
+    }
 
 
 @app.get("/api/v1/instruments/{symbol}/predictions/latest")

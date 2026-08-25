@@ -2,7 +2,12 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from stock_signal.analysis.engine import RuleBasedAnalysisEngine
-from stock_signal.analysis.indicators import wilder_atr
+from stock_signal.analysis.indicators import (
+    resistance_bands,
+    simple_moving_average_series,
+    wilder_atr,
+    wilder_rsi_series,
+)
 from stock_signal.analysis.market_relative import calculate_market_relative_metrics
 from stock_signal.analysis.patterns import TechnicalPatternDetector
 from stock_signal.domain.analysis import (
@@ -11,6 +16,7 @@ from stock_signal.domain.analysis import (
     InvestmentAction,
     PatternLifecycleStatus,
     PatternType,
+    PositionEntryPhase,
     TransitionPhase,
 )
 from stock_signal.domain.market_data import DailyBar
@@ -94,6 +100,56 @@ def make_custom_bars(rows: list[tuple[float, float, float, float, int]]) -> list
     ]
 
 
+def test_simple_moving_average_series_keeps_dates_aligned() -> None:
+    bars = make_bars([1, 2, 3, 4, 5, 6])
+
+    assert simple_moving_average_series(bars, 3) == (
+        None,
+        None,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+    )
+
+
+def test_wilder_rsi_handles_rise_fall_and_no_change() -> None:
+    rising = wilder_rsi_series(make_bars(list(range(100, 121))), 14)
+    falling = wilder_rsi_series(make_bars(list(range(120, 99, -1))), 14)
+    unchanged = wilder_rsi_series(make_bars([100] * 21), 14)
+
+    assert rising[-1] == 100.0
+    assert falling[-1] == 0.0
+    assert unchanged[-1] == 50.0
+    assert rising[13] is None
+
+
+def test_resistance_band_requires_repeated_local_highs() -> None:
+    peak_indexes = {25, 35, 45}
+    bars = make_custom_bars([
+        (100, 110 if index in peak_indexes else 101, 99, 100, 1_000)
+        for index in range(55)
+    ])
+
+    bands = resistance_bands(bars, lookback=40)
+
+    assert len(bands) == 1
+    assert bands[0].touches == 3
+    assert bands[0].lower <= 110 <= bands[0].upper
+    assert bands[0].distance_percent == 10.0
+
+
+def test_resistance_band_is_removed_after_clear_close_breakout() -> None:
+    peak_indexes = {25, 35, 45}
+    rows = [
+        (100, 110 if index in peak_indexes else 101, 99, 100, 1_000)
+        for index in range(55)
+    ]
+    rows[-1] = (114, 116, 113, 115, 2_000)
+
+    assert resistance_bands(make_custom_bars(rows), lookback=40) == ()
+
+
 def test_uptrend_has_readable_factors_and_non_probability_scores() -> None:
     result = RuleBasedAnalysisEngine().analyze(
         "TEST", make_bars([100 + index * 0.8 for index in range(40)]), 5
@@ -137,6 +193,56 @@ def test_position_style_requires_longer_history() -> None:
 
     assert result.status == "insufficient_data"
     assert "中長期の買い場分析には最低70営業日" in result.message
+
+
+def test_position_style_distinguishes_pullback_from_chasing_uptrend() -> None:
+    rising = [100 + index * 0.4 for index in range(80)]
+    pullback = [131, 130, 129, 128, 127, 126.5, 126, 125.5]
+    bars = make_bars(
+        [*rising, *pullback, 127],
+        start_date=date.today() - timedelta(days=88),
+    )
+    latest = bars[-1]
+    bars[-1] = DailyBar(
+        symbol=latest.symbol,
+        trade_date=latest.trade_date,
+        open=Decimal("125.8"),
+        high=Decimal("128"),
+        low=Decimal("124.8"),
+        close=Decimal("127"),
+        volume=latest.volume,
+        provider=latest.provider,
+        is_adjusted=latest.is_adjusted,
+    )
+
+    result = RuleBasedAnalysisEngine().analyze("TEST", bars, 20)
+
+    assert result.position_entry is not None
+    assert result.position_entry.phase is PositionEntryPhase.PULLBACK_CANDIDATE
+    assert any(
+        support.touched and support.held
+        for support in result.position_entry.supports
+    )
+    assert result.investment_decision is not None
+    assert result.investment_decision.action is InvestmentAction.BUY_CANDIDATE
+
+
+def test_position_style_waits_when_support_touch_has_no_rebound() -> None:
+    rising = [100 + index * 0.4 for index in range(80)]
+    bars = make_bars(
+        [*rising, 131, 130, 129, 128, 127, 126.5, 126, 125.5, 125],
+        start_date=date.today() - timedelta(days=88),
+    )
+
+    result = RuleBasedAnalysisEngine().analyze("TEST", bars, 20)
+
+    assert result.position_entry is not None
+    assert result.position_entry.phase in {
+        PositionEntryPhase.SUPPORT_TEST,
+        PositionEntryPhase.TREND_BROKEN,
+    }
+    assert result.investment_decision is not None
+    assert result.investment_decision.action is not InvestmentAction.BUY_CANDIDATE
 
 
 def test_flat_prices_are_judged_as_flat() -> None:
@@ -437,7 +543,7 @@ def test_light_context_evaluates_topix_and_upcoming_earnings() -> None:
     assert "決算" in result.investment_decision.summary
 
 
-def test_position_style_only_blocks_the_five_days_before_earnings() -> None:
+def test_position_style_only_warns_about_earnings_more_than_five_days_away() -> None:
     bars = make_rectangle_breakout(direction=Direction.UP)
     context = AnalysisContext(
         next_earnings_date=bars[-1].trade_date + timedelta(days=10),
@@ -453,7 +559,7 @@ def test_position_style_only_blocks_the_five_days_before_earnings() -> None:
     assert earnings.status.value == "partial"
     assert "警告表示にとどめます" in earnings.description
     assert result.investment_decision is not None
-    assert result.investment_decision.action is InvestmentAction.BUY_CANDIDATE
+    assert "決算直前" not in result.investment_decision.summary
 
 
 def test_stale_data_cannot_become_buy_candidate() -> None:

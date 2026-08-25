@@ -17,10 +17,26 @@
   const horizonGuideHolding = document.getElementById("horizon-guide-holding");
   const horizonGuidePurpose = document.getElementById("horizon-guide-purpose");
   const horizonGuideCaution = document.getElementById("horizon-guide-caution");
+  const indicatorProfileLabel = document.getElementById("indicator-profile-label");
+  const indicatorSummary = document.getElementById("indicator-summary");
+  const aiReviewRunButton = document.getElementById("ai-review-run");
+  const aiReviewTarget = document.getElementById("ai-review-target");
+  const aiReviewProfile = document.getElementById("ai-review-profile");
+  const aiReviewResult = document.getElementById("ai-review-result");
+  const openaiReviewEnabled = body.dataset.openaiReviewEnabled === "true";
+  const openaiModel = body.dataset.openaiModel;
   let selectedSymbol = body.dataset.selectedSymbol;
   let selectedProvider = body.dataset.selectedProvider || null;
   let selectedRange = "3m";
   let selectedHorizon = 5;
+  let currentChartPayload = null;
+  let currentPositionSupports = [];
+  let aiReviewController = null;
+  const chartIndicatorVisibility = {
+    "moving-average": true,
+    rsi: true,
+    resistance: true,
+  };
 
   const horizonProfiles = {
     5: {
@@ -29,13 +45,19 @@
       holding_period: "数日〜数週間",
       purpose: "転換初動やブレイク後の、新規購入タイミングを確認します。",
       caution: "1日だけの値動きで追わず、出来高と無効化水準も併せて確認します。",
+      moving_average_windows: [5, 20],
+      rsi_window: 14,
+      resistance_lookback: 60,
     },
     20: {
       label: "中長期の買い場",
       future_label: "20営業日先",
       holding_period: "数週間〜数か月",
-      purpose: "長期保有を始める前に、中期トレンドと底固めを確認します。",
-      caution: "企業価値は評価しないため、業績・財務は別に確認します。",
+      purpose: "中期上昇トレンド内の押し目、支持帯の維持、日足反発を確認します。",
+      caution: "支持帯への接触だけでは買いにせず、反発と業績・財務を別に確認します。",
+      moving_average_windows: [20, 60],
+      rsi_window: 28,
+      resistance_lookback: 120,
     },
   };
 
@@ -44,6 +66,7 @@
     horizonGuideHolding.textContent = profile.holding_period;
     horizonGuidePurpose.textContent = profile.purpose;
     horizonGuideCaution.textContent = profile.caution;
+    indicatorProfileLabel.textContent = `${profile.label}基準`;
   }
 
   function setSidebarCollapsed(collapsed) {
@@ -69,6 +92,209 @@
     maximumFractionDigits: 4,
   }).format(Number(value));
 
+  const movingAverageColors = {
+    5: "#c77932",
+    20: "#2f6da1",
+    60: "#76539a",
+  };
+
+  async function renderChart(payload) {
+    const bars = payload?.bars || [];
+    if (!bars.length) throw new Error("指定期間の日足データがありません");
+    const profile = horizonProfiles[selectedHorizon];
+    const dates = bars.map((bar) => bar.trade_date);
+    const traces = [{
+      type: "candlestick",
+      x: dates,
+      open: bars.map((bar) => Number(bar.open)),
+      high: bars.map((bar) => Number(bar.high)),
+      low: bars.map((bar) => Number(bar.low)),
+      close: bars.map((bar) => Number(bar.close)),
+      name: selectedSymbol,
+      increasing: { line: { color: "#16784a" } },
+      decreasing: { line: { color: "#b73b3b" } },
+      xaxis: "x",
+      yaxis: "y",
+    }, {
+      type: "bar",
+      x: dates,
+      y: bars.map((bar) => bar.volume),
+      marker: { color: "#8b98a5" },
+      name: "出来高",
+      xaxis: "x",
+      yaxis: "y2",
+      hovertemplate: "%{x}<br>出来高 %{y:,}<extra></extra>",
+    }];
+    const indicators = payload.indicators || {};
+    if (chartIndicatorVisibility["moving-average"]) {
+      profile.moving_average_windows.forEach((window) => {
+        const values = indicators.moving_averages?.[String(window)] || [];
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          x: dates,
+          y: values,
+          name: `${window}日移動平均`,
+          line: { color: movingAverageColors[window], width: 1.7 },
+          connectgaps: false,
+          xaxis: "x",
+          yaxis: "y",
+          hovertemplate: `%{x}<br>${window}日線 %{y:.2f}<extra></extra>`,
+        });
+      });
+    }
+
+    const shapes = [];
+    const annotations = [];
+    const resistance = chartIndicatorVisibility.resistance
+      ? indicators.resistance_bands?.[String(profile.resistance_lookback)] || []
+      : [];
+    resistance.forEach((band, index) => {
+      const firstVisibleDate = band.first_touched > dates[0]
+        ? band.first_touched
+        : dates[0];
+      shapes.push({
+        type: "rect",
+        xref: "x",
+        yref: "y",
+        x0: firstVisibleDate,
+        x1: dates.at(-1),
+        y0: band.lower,
+        y1: band.upper,
+        line: { color: "rgba(183,59,59,.48)", width: 1, dash: "dot" },
+        fillcolor: "rgba(183,59,59,.08)",
+        layer: "below",
+      });
+      annotations.push({
+        xref: "x",
+        yref: "y",
+        x: dates.at(-1),
+        y: band.center,
+        text: `抵抗帯${index + 1} ${formatPrice(band.lower)}〜${formatPrice(band.upper)}・${band.touches}回`,
+        showarrow: false,
+        xanchor: "right",
+        yanchor: "bottom",
+        bgcolor: "rgba(255,255,255,.82)",
+        bordercolor: "rgba(183,59,59,.3)",
+        font: { color: "#8f3030", size: 9 },
+      });
+    });
+    const positionSupports = selectedHorizon === 20
+      ? currentPositionSupports
+      : [];
+    positionSupports.forEach((support, index) => {
+      shapes.push({
+        type: "rect",
+        xref: "x",
+        yref: "y",
+        x0: dates[0],
+        x1: dates.at(-1),
+        y0: support.lower,
+        y1: support.upper,
+        line: { color: "rgba(47,109,161,.55)", width: 1, dash: "dot" },
+        fillcolor: support.touched
+          ? "rgba(47,109,161,.16)"
+          : "rgba(47,109,161,.07)",
+        layer: "below",
+      });
+      annotations.push({
+        xref: "x",
+        yref: "y",
+        x: dates[0],
+        y: support.center ?? support.level,
+        text: `支持候補${index + 1} ${escapeHtml(support.label)}`,
+        showarrow: false,
+        xanchor: "left",
+        yanchor: "top",
+        bgcolor: "rgba(255,255,255,.82)",
+        bordercolor: "rgba(47,109,161,.3)",
+        font: { color: "#2f6da1", size: 9 },
+      });
+    });
+
+    const showRsi = chartIndicatorVisibility.rsi;
+    if (showRsi) {
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        x: dates,
+        y: indicators.rsi?.[String(profile.rsi_window)] || [],
+        name: `RSI ${profile.rsi_window}日`,
+        line: { color: "#80651c", width: 1.6 },
+        connectgaps: false,
+        xaxis: "x",
+        yaxis: "y3",
+        hovertemplate: `%{x}<br>RSI %{y:.1f}<extra></extra>`,
+      });
+      [30, 70].forEach((level) => shapes.push({
+        type: "line",
+        xref: "x",
+        yref: "y3",
+        x0: dates[0],
+        x1: dates.at(-1),
+        y0: level,
+        y1: level,
+        line: { color: "rgba(128,101,28,.45)", width: 1, dash: "dot" },
+      }));
+    }
+
+    const layout = {
+      margin: { l: 64, r: 24, t: 42, b: 44 },
+      paper_bgcolor: "#ffffff",
+      plot_bgcolor: "#ffffff",
+      showlegend: chartIndicatorVisibility["moving-average"] || showRsi,
+      legend: { orientation: "h", x: 0, y: 1.08, font: { size: 10 } },
+      hovermode: "x unified",
+      shapes,
+      annotations,
+      height: showRsi ? 660 : 540,
+      xaxis: {
+        rangeslider: { visible: false },
+        anchor: showRsi ? "y3" : "y2",
+        gridcolor: "#edf0f2",
+      },
+      yaxis: {
+        domain: showRsi ? [0.46, 1] : [0.28, 1],
+        title: "価格",
+        gridcolor: "#edf0f2",
+      },
+      yaxis2: {
+        domain: showRsi ? [0.25, 0.38] : [0, 0.2],
+        title: "出来高",
+        gridcolor: "#edf0f2",
+      },
+      yaxis3: showRsi ? {
+        domain: [0, 0.17],
+        title: `RSI ${profile.rsi_window}`,
+        range: [0, 100],
+        tickvals: [30, 50, 70],
+        gridcolor: "#edf0f2",
+      } : undefined,
+    };
+    await Plotly.react(chartElement, traces, layout, {
+      responsive: true,
+      displaylogo: false,
+      locale: "ja",
+    });
+    const averageLabel = profile.moving_average_windows
+      .map((window) => `${window}日線`)
+      .join("・");
+    const enabledDescriptions = [];
+    if (chartIndicatorVisibility["moving-average"]) enabledDescriptions.push(averageLabel);
+    if (showRsi) enabledDescriptions.push(`RSI ${profile.rsi_window}日`);
+    if (chartIndicatorVisibility.resistance) {
+      enabledDescriptions.push(
+        `${profile.resistance_lookback}営業日の抵抗帯候補 ${resistance.length}件`,
+      );
+    }
+    if (positionSupports.length) {
+      enabledDescriptions.push(`中長期の支持候補 ${positionSupports.length}件`);
+    }
+    indicatorSummary.textContent = enabledDescriptions.length
+      ? `${enabledDescriptions.join("、")}を表示中。支持・抵抗帯は確定的な価格ではありません。`
+      : "追加指標は非表示です。";
+  }
+
   async function loadChart({ from = null, to = null } = {}) {
     if (!selectedSymbol) return;
     errorElement.hidden = true;
@@ -83,46 +309,8 @@
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "日足データを取得できませんでした");
       const bars = payload.bars;
-      if (!bars.length) throw new Error("指定期間の日足データがありません");
-      const dates = bars.map((bar) => bar.trade_date);
-      const candlestick = {
-        type: "candlestick",
-        x: dates,
-        open: bars.map((bar) => Number(bar.open)),
-        high: bars.map((bar) => Number(bar.high)),
-        low: bars.map((bar) => Number(bar.low)),
-        close: bars.map((bar) => Number(bar.close)),
-        name: selectedSymbol,
-        increasing: { line: { color: "#16784a" } },
-        decreasing: { line: { color: "#b73b3b" } },
-        xaxis: "x",
-        yaxis: "y",
-      };
-      const volume = {
-        type: "bar",
-        x: dates,
-        y: bars.map((bar) => bar.volume),
-        marker: { color: "#8b98a5" },
-        name: "出来高",
-        xaxis: "x",
-        yaxis: "y2",
-        hovertemplate: "%{x}<br>出来高 %{y:,}<extra></extra>",
-      };
-      const layout = {
-        margin: { l: 64, r: 24, t: 16, b: 44 },
-        paper_bgcolor: "#ffffff",
-        plot_bgcolor: "#ffffff",
-        showlegend: false,
-        hovermode: "x unified",
-        xaxis: { rangeslider: { visible: false }, anchor: "y2", gridcolor: "#edf0f2" },
-        yaxis: { domain: [0.28, 1], title: "価格", gridcolor: "#edf0f2" },
-        yaxis2: { domain: [0, 0.2], title: "出来高", gridcolor: "#edf0f2" },
-      };
-      await Plotly.react(chartElement, [candlestick, volume], layout, {
-        responsive: true,
-        displaylogo: false,
-        locale: "ja",
-      });
+      currentChartPayload = payload;
+      await renderChart(payload);
       priceElement.textContent = formatPrice(bars.at(-1).close);
       sourceElement.textContent = `取得元: ${payload.source.provider} ・ ${
         payload.source.is_adjusted ? "調整済み" : "未調整"
@@ -131,10 +319,19 @@
       document.getElementById("from-date").value = payload.range.from;
       document.getElementById("to-date").value = payload.range.to;
     } catch (error) {
+      currentChartPayload = null;
       errorElement.textContent = error.message;
       errorElement.hidden = false;
       Plotly.purge(chartElement);
     }
+  }
+
+  function rerenderCurrentChart() {
+    if (!currentChartPayload) return;
+    void renderChart(currentChartPayload).catch((error) => {
+      errorElement.textContent = error.message;
+      errorElement.hidden = false;
+    });
   }
 
   const directionLabels = { up: "上昇", flat: "停滞", down: "下落" };
@@ -250,11 +447,21 @@
 
   async function loadPrediction() {
     if (!selectedSymbol) return;
+    const requestedSymbol = selectedSymbol;
+    const requestedProvider = selectedProvider;
+    const requestedHorizon = selectedHorizon;
     const response = await fetch(
-      `/api/v1/instruments/${encodeURIComponent(selectedSymbol)}/analysis/latest?horizon=${selectedHorizon}${selectedProvider ? `&provider=${encodeURIComponent(selectedProvider)}` : ""}`,
+      `/api/v1/instruments/${encodeURIComponent(requestedSymbol)}/analysis/latest?horizon=${requestedHorizon}${requestedProvider ? `&provider=${encodeURIComponent(requestedProvider)}` : ""}`,
     );
     const payload = await response.json();
+    if (
+      requestedSymbol !== selectedSymbol
+      || requestedProvider !== selectedProvider
+      || requestedHorizon !== selectedHorizon
+    ) return;
     if (!response.ok || payload.status !== "ready") {
+      currentPositionSupports = [];
+      rerenderCurrentChart();
       predictionElement.className = "prediction-empty";
       predictionElement.textContent = payload.message || payload.detail || "分析結果を取得できませんでした";
       return;
@@ -326,11 +533,17 @@
     const reasons = decision.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
     const cautions = decision.cautions.map((caution) => `<li>${escapeHtml(caution)}</li>`).join("");
     const transition = payload.transition_readiness;
-    const positionRiskPerShare = transition
-      ? Number(transition.current_price) - Number(transition.invalidation_price)
+    const positionEntry = payload.position_entry;
+    currentPositionSupports = positionEntry?.supports || [];
+    rerenderCurrentChart();
+    const riskAssessment = positionEntry?.invalidation_price != null
+      ? positionEntry
+      : transition;
+    const positionRiskPerShare = riskAssessment
+      ? Number(riskAssessment.current_price) - Number(riskAssessment.invalidation_price)
       : Number.NaN;
     const positionSizePanel = Number.isFinite(positionRiskPerShare) && positionRiskPerShare > 0
-      ? `<section class="position-size-calculator" data-current-price="${transition.current_price}" data-invalidation-price="${transition.invalidation_price}">
+      ? `<section class="position-size-calculator" data-current-price="${riskAssessment.current_price}" data-invalidation-price="${riskAssessment.invalidation_price}">
           <div><span>ポジションサイズ計算</span><strong>許容損失から購入上限を確認</strong></div>
           <label>この取引で許容する損失額
             <span><input class="position-risk-input" type="number" min="0" step="1000" inputmode="numeric" placeholder="例：50000"> 円</span>
@@ -365,6 +578,39 @@
         </dl>
         <ul class="transition-condition-list">${transitionConditions}</ul>
       </section>` : "";
+    const positionConditions = positionEntry ? positionEntry.conditions.map((condition) => `
+      <li class="position-entry-condition ${condition.satisfied ? "satisfied" : "pending"}">
+        <span aria-hidden="true">${condition.satisfied ? "✓" : "○"}</span>
+        <div><strong>${escapeHtml(condition.label)}</strong><p>${escapeHtml(condition.description)}</p></div>
+      </li>`).join("") : "";
+    const supportCards = positionEntry ? positionEntry.supports.map((support) => `
+      <li class="support-level ${support.touched ? "touched" : "nearby"} ${support.held ? "held" : "broken"}">
+        <div><strong>${escapeHtml(support.label)}</strong><span>${support.touched ? (support.held ? "接触・維持" : "接触・割れ") : "接近度"}</span></div>
+        <dl>
+          <div><dt>中心</dt><dd>${formatPrice(support.level)}</dd></div>
+          <div><dt>候補帯</dt><dd>${formatPrice(support.lower)}〜${formatPrice(support.upper)}</dd></div>
+          <div><dt>現在値との差</dt><dd>${Number(support.distance_atr).toFixed(2)} ATR</dd></div>
+        </dl>
+      </li>`).join("") : "";
+    const positionEntryPanel = positionEntry ? `
+      <section class="position-entry-assessment ${positionEntry.phase}">
+        <div class="position-entry-heading">
+          <div><span>中長期ポジションの買い場</span><strong>${escapeHtml(positionEntry.phase_label)}</strong></div>
+          <div class="position-entry-progress"><span>条件進捗</span><strong>${positionEntry.satisfied_conditions} / ${positionEntry.total_conditions}</strong><small>確率ではありません</small></div>
+        </div>
+        <p>${escapeHtml(positionEntry.summary)}</p>
+        ${positionEntry.next_condition ? `<div class="next-condition"><span>次に必要な条件</span><strong>${escapeHtml(positionEntry.next_condition.label)}</strong><p>${escapeHtml(positionEntry.next_condition.description)}</p></div>` : ""}
+        <dl class="position-entry-levels">
+          <div><dt>現在値</dt><dd>${formatPrice(positionEntry.current_price)}</dd></div>
+          <div><dt>ATR(20)</dt><dd>${formatPrice(positionEntry.atr)}</dd></div>
+          <div><dt>参考無効化水準</dt><dd>${positionEntry.invalidation_price == null ? "接触後に表示" : formatPrice(positionEntry.invalidation_price)}</dd></div>
+        </dl>
+        <h4>支持候補</h4>
+        <ul class="support-level-list">${supportCards}</ul>
+        <h4>購入候補までの条件</h4>
+        <ul class="position-entry-condition-list">${positionConditions}</ul>
+        <small>支持帯は買いを保証しません。中期トレンド、終値維持、反発を同時に確認します。</small>
+      </section>` : "";
     predictionElement.innerHTML = `
       <section class="investment-decision ${decision.action}">
         <div><span>投資検討区分</span><strong>${actionLabels[decision.action]}</strong></div>
@@ -372,7 +618,7 @@
         <p>${escapeHtml(decision.summary)}</p>
         <ul>${reasons}</ul>
       </section>
-      ${transitionPanel}
+      ${positionEntryPanel || transitionPanel}
       ${positionSizePanel}
       <div class="analysis-summary">
         <div><span>テクニカル方向</span><strong class="decision ${payload.direction}">${directionLabels[payload.direction]}</strong></div>
@@ -415,11 +661,149 @@
     });
   }
 
+  function resetAiReview() {
+    aiReviewController?.abort();
+    aiReviewController = null;
+    const instrumentName = nameElement.textContent.trim();
+    aiReviewTarget.textContent = selectedSymbol
+      ? `${selectedSymbol}${instrumentName ? ` ${instrumentName}` : ""}`
+      : "銘柄を選択してください";
+    const profile = horizonProfiles[selectedHorizon];
+    aiReviewProfile.textContent = `${profile.label}・${profile.future_label} ／ ${openaiModel}`;
+    aiReviewRunButton.disabled = !openaiReviewEnabled || !selectedSymbol;
+    aiReviewRunButton.textContent = "最新情報を検索して確認";
+    aiReviewResult.className = "ai-review-empty";
+    aiReviewResult.textContent = openaiReviewEnabled
+      ? "AIの確認結果はまだありません。実行前にルールベースの投資判断材料を確認してください。"
+      : "OPENAI_API_KEYを設定すると、この銘柄の最新情報を検索できます。";
+  }
+
+  function safeExternalUrl(value) {
+    try {
+      const parsed = new URL(value);
+      return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function renderAiReview(payload) {
+    const report = document.createElement("article");
+    report.className = "ai-review-report";
+
+    const meta = document.createElement("div");
+    meta.className = "ai-review-report-meta";
+    const generatedAt = new Date(payload.generated_at).toLocaleString("ja-JP");
+    [
+      `${payload.symbol} ${payload.display_name}`,
+      `日足基準 ${payload.technical_as_of_date}`,
+      `調査日時 ${generatedAt}`,
+      `モデル ${payload.model}`,
+    ].forEach((label) => {
+      const item = document.createElement("span");
+      item.textContent = label;
+      meta.append(item);
+    });
+    report.append(meta);
+
+    const reportText = document.createElement("p");
+    reportText.className = "ai-review-report-text";
+    (payload.report_segments || [{ text: payload.report_text }]).forEach((segment) => {
+      const url = segment.citation ? safeExternalUrl(segment.citation.url) : null;
+      if (!url) {
+        reportText.append(document.createTextNode(segment.text));
+        return;
+      }
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.title = segment.citation.title || "参照情報を開く";
+      link.textContent = segment.text || "[出典]";
+      reportText.append(link);
+    });
+    report.append(reportText);
+
+    const uniqueSources = new Map();
+    (payload.citations || []).forEach((citation) => {
+      const url = safeExternalUrl(citation.url);
+      if (url && !uniqueSources.has(url)) uniqueSources.set(url, citation.title || url);
+    });
+    if (uniqueSources.size) {
+      const sources = document.createElement("section");
+      sources.className = "ai-review-sources";
+      const title = document.createElement("h4");
+      title.textContent = `参照情報 ${uniqueSources.size}件`;
+      const list = document.createElement("ol");
+      uniqueSources.forEach((sourceTitle, url) => {
+        const item = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = sourceTitle;
+        item.append(link);
+        list.append(item);
+      });
+      sources.append(title, list);
+      report.append(sources);
+    } else {
+      const citationWarning = document.createElement("p");
+      citationWarning.className = "ai-review-disclaimer";
+      citationWarning.textContent = "引用付きの関連情報は取得できませんでした。未確認事項として扱ってください。";
+      report.append(citationWarning);
+    }
+
+    const disclaimer = document.createElement("p");
+    disclaimer.className = "ai-review-disclaimer";
+    disclaimer.textContent = payload.notice;
+    report.append(disclaimer);
+    aiReviewResult.replaceChildren(report);
+    aiReviewResult.className = "ai-review-result";
+  }
+
+  aiReviewRunButton.addEventListener("click", async () => {
+    if (!openaiReviewEnabled || !selectedSymbol) return;
+    const requestedSymbol = selectedSymbol;
+    const requestedHorizon = selectedHorizon;
+    const controller = new AbortController();
+    aiReviewController?.abort();
+    aiReviewController = controller;
+    aiReviewRunButton.disabled = true;
+    aiReviewRunButton.textContent = "検索・照合しています…";
+    aiReviewResult.className = "ai-review-loading";
+    aiReviewResult.textContent = "公式発表と関連報道を検索しています。数十秒かかる場合があります。";
+    const parameters = new URLSearchParams({ horizon: String(requestedHorizon) });
+    if (selectedProvider) parameters.set("provider", selectedProvider);
+    try {
+      const response = await fetch(
+        `/api/v1/instruments/${encodeURIComponent(requestedSymbol)}/ai-investment-review?${parameters}`,
+        { method: "POST", signal: controller.signal },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "AI最終確認を取得できませんでした");
+      if (requestedSymbol !== selectedSymbol || requestedHorizon !== selectedHorizon) return;
+      renderAiReview(payload);
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      aiReviewResult.className = "ai-review-error";
+      aiReviewResult.textContent = error.message;
+    } finally {
+      if (aiReviewController === controller) {
+        aiReviewController = null;
+        aiReviewRunButton.disabled = !openaiReviewEnabled || !selectedSymbol;
+        aiReviewRunButton.textContent = "最新情報を検索して確認";
+      }
+    }
+  });
+
   function selectInstrument(button) {
     selectedSymbol = button.dataset.symbol;
     selectedProvider = button.dataset.provider || null;
+    currentPositionSupports = [];
     symbolElement.textContent = selectedSymbol;
     nameElement.textContent = button.dataset.name || "";
+    resetAiReview();
     document.querySelectorAll(".watchlist-item").forEach((item) => {
       item.classList.toggle("selected", item.dataset.symbol === selectedSymbol);
     });
@@ -656,15 +1040,24 @@
       loadChart();
     });
   });
+  document.querySelectorAll("[data-chart-indicator]").forEach((input) => {
+    input.addEventListener("change", () => {
+      chartIndicatorVisibility[input.dataset.chartIndicator] = input.checked;
+      rerenderCurrentChart();
+    });
+  });
   document.querySelectorAll(".horizon-controls button").forEach((button) => {
     button.addEventListener("click", () => {
       selectedHorizon = Number(button.dataset.horizon);
+      currentPositionSupports = [];
       document.querySelectorAll(".horizon-controls button").forEach((item) => {
         item.classList.toggle("active", item === button);
         item.setAttribute("aria-pressed", String(item === button));
       });
       updateHorizonGuide();
       loadPrediction();
+      rerenderCurrentChart();
+      resetAiReview();
     });
   });
   document.getElementById("custom-range-form").addEventListener("submit", (event) => {
@@ -678,4 +1071,5 @@
   const initialButton = document.querySelector(`.watchlist-item[data-symbol="${CSS.escape(selectedSymbol)}"]`);
   updateHorizonGuide();
   if (initialButton) selectInstrument(initialButton);
+  else resetAiReview();
 })();

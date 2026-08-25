@@ -225,7 +225,7 @@ def test_daily_batch_fetches_only_after_latest_date_and_records_run(database_url
     assert result.items[0].analysis_summary["5"]["action"] in {
         "buy_candidate", "watch", "avoid_new_buy", "insufficient_data"
     }
-    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.5.0"
+    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.6.0"
 
 
 def test_failure_of_one_symbol_does_not_discard_other_symbol(database_url) -> None:

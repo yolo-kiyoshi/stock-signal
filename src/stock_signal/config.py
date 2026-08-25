@@ -49,6 +49,9 @@ class Settings:
     jquants_plan: str = "light"
     slack_webhook_url: str | None = None
     market_screening_limit: int = 500
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.5"
+    openai_max_output_tokens: int = 6_000
 
     @property
     def jquants_rate_limit_per_minute(self) -> int:
@@ -96,6 +99,21 @@ class Settings:
             raise ConfigurationError("MARKET_SCREENING_LIMIT must be an integer") from error
         if not 1 <= market_screening_limit <= 2000:
             raise ConfigurationError("MARKET_SCREENING_LIMIT must be between 1 and 2000")
+        openai_model = os.getenv("OPENAI_MODEL", "gpt-5.5").strip()
+        if not openai_model or len(openai_model) > 100:
+            raise ConfigurationError("OPENAI_MODEL is invalid")
+        try:
+            openai_max_output_tokens = int(
+                os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "6000")
+            )
+        except ValueError as error:
+            raise ConfigurationError(
+                "OPENAI_MAX_OUTPUT_TOKENS must be an integer"
+            ) from error
+        if not 2_000 <= openai_max_output_tokens <= 20_000:
+            raise ConfigurationError(
+                "OPENAI_MAX_OUTPUT_TOKENS must be between 2000 and 20000"
+            )
 
         return cls(
             app_env=os.getenv("APP_ENV", "development").strip(),
@@ -110,6 +128,9 @@ class Settings:
             jquants_plan=jquants_plan,
             slack_webhook_url=os.getenv("SLACK_WEBHOOK_URL") or None,
             market_screening_limit=market_screening_limit,
+            openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+            openai_model=openai_model,
+            openai_max_output_tokens=openai_max_output_tokens,
         )
 
     def safe_dict(self) -> dict[str, object]:
@@ -117,4 +138,5 @@ class Settings:
         values["alpha_vantage_api_key"] = "configured" if self.alpha_vantage_api_key else "unset"
         values["jquants_api_key"] = "configured" if self.jquants_api_key else "unset"
         values["slack_webhook_url"] = "configured" if self.slack_webhook_url else "unset"
+        values["openai_api_key"] = "configured" if self.openai_api_key else "unset"
         return values

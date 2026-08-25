@@ -10,6 +10,7 @@ from stock_signal.domain.analysis import (
     Direction,
     PatternDetection,
     PatternLifecycleAssessment,
+    PositionEntryAssessment,
     TransitionReadiness,
 )
 from stock_signal.domain.market_data import DailyBar
@@ -68,3 +69,12 @@ class TransitionReadinessEvaluatorProtocol(Protocol):
         context: AnalysisContext,
         horizon_days: int,
     ) -> TransitionReadiness: ...
+
+
+class PositionEntryEvaluatorProtocol(Protocol):
+    """中長期の押し目・支持帯評価を交換可能にする契約。"""
+
+    def evaluate(
+        self,
+        bars: Sequence[DailyBar],
+    ) -> PositionEntryAssessment: ...

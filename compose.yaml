@@ -72,6 +72,9 @@ services:
     <<: *stock-signal
     environment:
       <<: *common-environment
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.5}
+      OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-6000}
     command:
       - uvicorn
       - stock_signal.web.app:app

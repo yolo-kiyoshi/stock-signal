@@ -91,6 +91,17 @@ class TransitionPhase(StrEnum):
     CAUTION = "caution"
 
 
+class PositionEntryPhase(StrEnum):
+    """中長期ポジションを開始する前の押し目評価段階。"""
+
+    PULLBACK_CANDIDATE = "pullback_candidate"
+    SUPPORT_TEST = "support_test"
+    APPROACHING_SUPPORT = "approaching_support"
+    TREND_EXTENDED = "trend_extended"
+    TREND_BROKEN = "trend_broken"
+    NO_SETUP = "no_setup"
+
+
 @dataclass(frozen=True, slots=True)
 class PatternDetection:
     """完成済みパターンとブレイク時点の客観的な特徴量。"""
@@ -164,6 +175,48 @@ class TransitionReadiness:
 
 
 @dataclass(frozen=True, slots=True)
+class PositionSupportLevel:
+    """中長期の押し目評価に使う一つの支持候補。"""
+
+    key: str
+    label: str
+    level: float
+    lower: float
+    upper: float
+    distance_atr: float
+    touched: bool
+    held: bool
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
+class PositionEntryCondition:
+    """中長期の押し目候補に必要な確認条件。"""
+
+    key: str
+    label: str
+    satisfied: bool
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
+class PositionEntryAssessment:
+    """中期上昇トレンド内の支持帯接触と反発を評価した結果。"""
+
+    phase: PositionEntryPhase
+    satisfied_conditions: int
+    total_conditions: int
+    readiness_score: float
+    summary: str
+    next_condition: PositionEntryCondition | None
+    conditions: tuple[PositionEntryCondition, ...]
+    supports: tuple[PositionSupportLevel, ...]
+    current_price: float
+    atr: float
+    invalidation_price: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class EquityCheck:
     """出来高など、個別株として追加確認する項目。"""
 
@@ -224,6 +277,7 @@ class AnalysisResult:
     patterns: tuple[PatternDetection, ...] = ()
     pattern_lifecycles: tuple[PatternLifecycleAssessment, ...] = ()
     transition_readiness: TransitionReadiness | None = None
+    position_entry: PositionEntryAssessment | None = None
     equity_checks: tuple[EquityCheck, ...] = ()
     investment_decision: InvestmentDecision | None = None
 

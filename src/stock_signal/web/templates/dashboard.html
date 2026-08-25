@@ -4,13 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TOMOSHIBIYORI</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='dashboard.css') }}?v=20260822-1">
+  <link rel="stylesheet" href="{{ url_for('static', path='dashboard.css') }}?v=20260825-1">
   <script defer src="/assets/plotly.min.js"></script>
-  <script defer src="{{ url_for('static', path='dashboard.js') }}?v=20260822-1"></script>
+  <script defer src="{{ url_for('static', path='dashboard.js') }}?v=20260825-1"></script>
 </head>
 <body
   data-selected-symbol="{{ selected_symbol or '' }}"
   data-selected-provider="{{ selected_provider or '' }}"
+  data-openai-review-enabled="{{ 'true' if openai_review_available else 'false' }}"
+  data-openai-model="{{ openai_model }}"
 >
   <header class="app-header">
     <div class="brand-lockup">
@@ -381,6 +383,18 @@
             <button type="button" data-range="all">全期間</button>
           </div>
         </div>
+        <div class="chart-indicator-toolbar" aria-label="チャート指標の表示切り替え">
+          <div>
+            <span>テクニカル指標</span>
+            <strong id="indicator-profile-label">スイング基準</strong>
+          </div>
+          <div class="indicator-toggles">
+            <label><input type="checkbox" data-chart-indicator="moving-average" checked>移動平均線</label>
+            <label><input type="checkbox" data-chart-indicator="rsi" checked>RSI</label>
+            <label><input type="checkbox" data-chart-indicator="resistance" checked>抵抗帯</label>
+          </div>
+          <p id="indicator-summary">5・20日線、RSI 14日、60営業日の抵抗帯候補を表示します。</p>
+        </div>
         <form id="custom-range-form" class="custom-range">
           <label>開始日<input id="from-date" type="date"></label>
           <label>終了日<input id="to-date" type="date"></label>
@@ -418,6 +432,46 @@
         </aside>
         <div id="prediction-content" class="prediction-empty" aria-live="polite">
           分析結果を読み込んでいます。
+        </div>
+      </section>
+
+      <section class="ai-review-section" aria-labelledby="ai-review-title">
+        <div class="ai-review-header">
+          <div>
+            <p class="eyebrow">最新情報との照合</p>
+            <h3 id="ai-review-title">AI最終確認</h3>
+            <p>選択銘柄のテクニカル分析を起点に、最新の公式発表や関連報道を検索します。</p>
+          </div>
+          <span class="ai-review-status {{ 'ready' if openai_review_available else 'not-configured' }}">
+            {{ '利用可能' if openai_review_available else 'APIキー未設定' }}
+          </span>
+        </div>
+        <ol class="ai-review-flow" aria-label="AI最終確認の処理内容">
+          <li><span>1</span><strong>目的別分析を固定</strong><small>スイングか中長期の押し目かを引き継ぐ</small></li>
+          <li><span>2</span><strong>最新情報を検索</strong><small>公式情報と信頼できる報道を優先</small></li>
+          <li><span>3</span><strong>矛盾とリスクを確認</strong><small>検討継続・保留・見送りを整理</small></li>
+        </ol>
+        <div class="ai-review-action">
+          <div>
+            <span>確認対象</span>
+            <strong id="ai-review-target">{{ selected_symbol or '銘柄を選択してください' }}</strong>
+            <small id="ai-review-profile">スイング・5営業日先 ／ {{ openai_model }}</small>
+          </div>
+          <button
+            id="ai-review-run"
+            type="button"
+            {% if not openai_review_available or not selected_symbol %}disabled{% endif %}
+          >最新情報を検索して確認</button>
+        </div>
+        {% if not openai_review_available %}
+        <p class="ai-review-setup">
+          <code>.env</code>へ<code>OPENAI_API_KEY</code>を設定し、Webコンテナを再作成すると有効になります。
+          APIキーは画面やレスポンスへ表示しません。
+        </p>
+        {% endif %}
+        <p class="ai-review-cost-note">ボタンを押した場合だけ実行します。OpenAI APIとWeb検索の利用料金が発生する場合があります。</p>
+        <div id="ai-review-result" class="ai-review-empty" aria-live="polite">
+          AIの確認結果はまだありません。先にルールベースの投資判断材料を確認してください。
         </div>
       </section>
     </section>

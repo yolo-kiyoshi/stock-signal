@@ -1,8 +1,11 @@
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+import stock_signal.web.app as web_app_module
+from stock_signal.ai_review import InvestmentReview, ReviewCitation
 from stock_signal.database import (
     add_watchlist_item,
     replace_instruments,
@@ -12,7 +15,12 @@ from stock_signal.domain.market_data import DailyBar
 from stock_signal.web.app import app
 
 
-def test_dashboard_is_japanese() -> None:
+def test_dashboard_is_japanese(monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_app_module,
+        "settings",
+        replace(web_app_module.settings, openai_api_key=None),
+    )
     with TestClient(app) as client:
         response = client.get("/")
 
@@ -43,6 +51,16 @@ def test_dashboard_is_japanese() -> None:
     assert "スイング" in response.text
     assert "中長期の買い場" in response.text
     assert 'data-horizon="1"' not in response.text
+    assert 'data-chart-indicator="moving-average"' in response.text
+    assert 'data-chart-indicator="rsi"' in response.text
+    assert 'data-chart-indicator="resistance"' in response.text
+    assert "移動平均線" in response.text
+    assert "抵抗帯候補" in response.text
+    assert 'id="ai-review-run"' in response.text
+    assert 'id="ai-review-result"' in response.text
+    assert "AI最終確認" in response.text
+    assert "最新情報を検索して確認" in response.text
+    assert "APIキー未設定" in response.text
 
 
 def test_hidden_elements_have_priority_over_layout_styles() -> None:
@@ -62,6 +80,12 @@ def test_hidden_elements_have_priority_over_layout_styles() -> None:
     assert ".market-watch-add" in response.text
     assert ".market-signal-row" in response.text
     assert ".position-size-calculator" in response.text
+    assert ".chart-indicator-toolbar" in response.text
+    assert ".indicator-toggles" in response.text
+    assert ".ai-review-section" in response.text
+    assert ".ai-review-report-text" in response.text
+    assert ".position-entry-assessment" in response.text
+    assert ".support-level-list" in response.text
 
 
 def test_market_candidate_watchlist_control_is_wired() -> None:
@@ -81,6 +105,173 @@ def test_market_candidate_watchlist_control_is_wired() -> None:
     assert "許容損失から購入上限" in response.text
     assert "エンジン信頼度レポート" in response.text
     assert "検証実績は未生成" in response.text
+    assert "renderChart" in response.text
+    assert "resistance_bands" in response.text
+    assert "RSI" in response.text
+    assert "ai-investment-review" in response.text
+    assert "safeExternalUrl" in response.text
+    assert "position_entry" in response.text
+    assert "支持候補" in response.text
+    assert "中長期の支持候補" in response.text
+
+
+def test_ai_review_capability_is_explicit_when_key_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_app_module,
+        "settings",
+        replace(web_app_module.settings, openai_api_key=None),
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v1/ai-investment-review/capability")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["enabled"] is False
+    assert payload["status"] == "not_configured"
+    assert payload["model"] == web_app_module.settings.openai_model
+    assert payload["max_output_tokens"] == 6_000
+    assert "利用料金" in payload["notice"]
+
+
+def test_ai_review_execution_is_rejected_before_api_key_configuration(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        web_app_module,
+        "settings",
+        replace(web_app_module.settings, openai_api_key=None),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/instruments/7203/ai-investment-review?horizon=5"
+        )
+
+    assert response.status_code == 503
+    assert "OPENAI_API_KEY" in response.json()["detail"]
+
+
+def test_ai_review_endpoint_combines_saved_analysis_and_citations(
+    database_url,
+    monkeypatch,
+) -> None:
+    replace_instruments(
+        database_url,
+        "jquants",
+        [_instrument("7203", "トヨタ自動車")],
+    )
+    upsert_daily_bars(
+        database_url,
+        [
+            DailyBar(
+                symbol="7203",
+                trade_date=date(2026, 7, 16) + timedelta(days=index),
+                open=Decimal(str(2_800 + index)),
+                high=Decimal(str(2_810 + index)),
+                low=Decimal(str(2_790 + index)),
+                close=Decimal(str(2_805 + index)),
+                volume=1_000_000,
+                provider="jquants",
+                is_adjusted=True,
+            )
+            for index in range(40)
+        ],
+    )
+
+    class FakeReviewService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def review(self, **kwargs) -> InvestmentReview:
+            assert kwargs["technical_context"]["score_is_probability"] is False
+            report_text = "公式情報を確認しました。[出典]"
+            citation_start = report_text.index("[出典]")
+            return InvestmentReview(
+                symbol="7203",
+                display_name="トヨタ自動車",
+                horizon_days=5,
+                technical_as_of_date=kwargs["technical_context"]["as_of_date"],
+                generated_at="2026-08-25T09:00:00+00:00",
+                model="gpt-test",
+                response_id="resp_test",
+                report_text=report_text,
+                citations=(
+                    ReviewCitation(
+                        citation_start,
+                        citation_start + len("[出典]"),
+                        "https://example.com/official",
+                        "公式情報",
+                    ),
+                ),
+                search_performed=True,
+            )
+
+    monkeypatch.setattr(
+        web_app_module,
+        "settings",
+        replace(web_app_module.settings, openai_api_key="test-key"),
+    )
+    monkeypatch.setattr(
+        web_app_module,
+        "OpenAIInvestmentReviewService",
+        FakeReviewService,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/instruments/7203/ai-investment-review"
+            "?horizon=5&provider=jquants"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["search_performed"] is True
+    assert payload["report_segments"][1]["citation"]["url"] == (
+        "https://example.com/official"
+    )
+
+
+def test_daily_bar_api_returns_aligned_chart_indicators(database_url) -> None:
+    upsert_daily_bars(
+        database_url,
+        [
+            DailyBar(
+                symbol="7203",
+                trade_date=date(2026, 4, 1) + timedelta(days=index),
+                open=Decimal(str(2_800 + index)),
+                high=Decimal(str(2_810 + index)),
+                low=Decimal(str(2_790 + index)),
+                close=Decimal(str(2_805 + index)),
+                volume=1_000_000 + index * 1_000,
+                provider="jquants",
+                is_adjusted=True,
+            )
+            for index in range(100)
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/instruments/7203/daily-bars?range=1m&provider=jquants"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    bars = payload["bars"]
+    indicators = payload["indicators"]
+    assert bars
+    assert set(indicators["moving_averages"]) == {"5", "20", "60"}
+    assert set(indicators["rsi"]) == {"14", "28"}
+    assert set(indicators["resistance_bands"]) == {"60", "120"}
+    assert all(
+        len(series) == len(bars)
+        for series in indicators["moving_averages"].values()
+    )
+    assert all(len(series) == len(bars) for series in indicators["rsi"].values())
+    # 表示期間より前の日足も計算するため、先頭から指標を描画できる。
+    assert indicators["moving_averages"]["60"][0] is not None
+    assert indicators["rsi"]["28"][0] is not None
+    assert indicators["definitions"]["score_is_probability"] is False
 
 
 def test_candidates_are_rule_based_and_not_probabilities() -> None:
@@ -126,6 +317,7 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
     }
     assert len(transition["conditions"]) >= 4
     assert isinstance(payload["patterns"], list)
+    assert payload["position_entry"] is None
     if payload["patterns"]:
         lifecycle = payload["patterns"][0]["lifecycle"]
         assert lifecycle["status"] in {

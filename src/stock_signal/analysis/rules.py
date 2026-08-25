@@ -5,7 +5,11 @@ from math import sqrt
 from statistics import fmean, pstdev
 
 from stock_signal.analysis.horizons import get_horizon_profile
-from stock_signal.analysis.indicators import wilder_atr
+from stock_signal.analysis.indicators import (
+    simple_moving_average_series,
+    wilder_atr,
+    wilder_rsi_series,
+)
 from stock_signal.domain.analysis import AnalysisFactor, Direction
 from stock_signal.domain.market_data import DailyBar
 
@@ -24,12 +28,14 @@ class MovingAverageRule:
         required = profile.moving_long_window + 5
         if len(bars) < required:
             return None
-        closes = _closes(bars)
         short_window = profile.moving_short_window
         long_window = profile.moving_long_window
-        short = fmean(closes[-short_window:])
-        long = fmean(closes[-long_window:])
-        previous_long = fmean(closes[-long_window - 5:-5])
+        short = simple_moving_average_series(bars, short_window)[-1]
+        long_series = simple_moving_average_series(bars, long_window)
+        long = long_series[-1]
+        previous_long = long_series[-6]
+        if short is None or long is None or previous_long is None:
+            return None
         spread = (short / long - 1) * 100
         slope = (long / previous_long - 1) * 100
         if spread > 0.5 and slope > 0:
@@ -140,16 +146,9 @@ class RsiRule:
         window = profile.rsi_window
         if len(bars) < window + 1:
             return None
-        closes = _closes(bars)
-        changes = [
-            current - previous
-            for previous, current in zip(
-                closes[-window - 1:-1], closes[-window:], strict=True
-            )
-        ]
-        average_gain = fmean(max(change, 0) for change in changes)
-        average_loss = fmean(max(-change, 0) for change in changes)
-        rsi = 100.0 if average_loss == 0 else 100 - 100 / (1 + average_gain / average_loss)
+        rsi = wilder_rsi_series(bars, window)[-1]
+        if rsi is None:
+            return None
         if 55 <= rsi <= 70:
             return AnalysisFactor(self.rule_id, f"RSI（{window}日）", Direction.UP, 15,
                                   f"RSIは{rsi:.1f}で、上向きの勢いがあります")

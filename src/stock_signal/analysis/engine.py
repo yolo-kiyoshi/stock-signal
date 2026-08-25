@@ -7,12 +7,14 @@ from stock_signal.analysis.base import (
     AnalysisRule,
     PatternDetector,
     PatternLifecycleEvaluatorProtocol,
+    PositionEntryEvaluatorProtocol,
     TransitionReadinessEvaluatorProtocol,
 )
 from stock_signal.analysis.decision import LongOnlyDecisionPolicy
 from stock_signal.analysis.horizons import get_horizon_profile
 from stock_signal.analysis.lifecycle import PatternLifecycleEvaluator
 from stock_signal.analysis.patterns import TechnicalPatternDetector
+from stock_signal.analysis.position_entry import PositionEntryEvaluator
 from stock_signal.analysis.rules import DEFAULT_RULES
 from stock_signal.analysis.transition import TransitionReadinessEvaluator
 from stock_signal.domain.analysis import (
@@ -32,7 +34,7 @@ class RuleBasedAnalysisEngine:
     """注入されたルールを集計する、決定論的な分析エンジン。"""
 
     engine_id = "rule_based_technical"
-    version = "2.5.0"
+    version = "2.7.0"
 
     def __init__(
         self,
@@ -40,12 +42,16 @@ class RuleBasedAnalysisEngine:
         pattern_detector: PatternDetector | None = None,
         lifecycle_evaluator: PatternLifecycleEvaluatorProtocol | None = None,
         transition_evaluator: TransitionReadinessEvaluatorProtocol | None = None,
+        position_entry_evaluator: PositionEntryEvaluatorProtocol | None = None,
         decision_policy: LongOnlyDecisionPolicy | None = None,
     ) -> None:
         self.rules = tuple(rules)
         self.pattern_detector = pattern_detector or TechnicalPatternDetector()
         self.lifecycle_evaluator = lifecycle_evaluator or PatternLifecycleEvaluator()
         self.transition_evaluator = transition_evaluator or TransitionReadinessEvaluator()
+        self.position_entry_evaluator = (
+            position_entry_evaluator or PositionEntryEvaluator()
+        )
         self.decision_policy = decision_policy or LongOnlyDecisionPolicy()
 
     def analyze(
@@ -128,6 +134,11 @@ class RuleBasedAnalysisEngine:
             analysis_context,
             horizon_days,
         )
+        position_entry = (
+            self.position_entry_evaluator.evaluate(ordered)
+            if horizon_days == 20
+            else None
+        )
         checks = self.decision_policy.equity_checks(
             ordered, patterns, analysis_context, horizon_days
         )
@@ -137,6 +148,7 @@ class RuleBasedAnalysisEngine:
             patterns,
             pattern_lifecycles,
             transition_readiness,
+            position_entry,
             checks,
             horizon_days,
         )
@@ -148,6 +160,7 @@ class RuleBasedAnalysisEngine:
             patterns=patterns,
             pattern_lifecycles=pattern_lifecycles,
             transition_readiness=transition_readiness,
+            position_entry=position_entry,
             equity_checks=checks,
             investment_decision=decision,
         )

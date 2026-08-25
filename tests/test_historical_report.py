@@ -40,7 +40,7 @@ def _result(
         },
         factors=(),
         engine_id="rule_based_technical",
-        engine_version="2.5.0",
+        engine_version="2.6.0",
         investment_decision=decision,
     )
     outcome = RealizedOutcome(
@@ -99,6 +99,6 @@ def test_render_historical_fit_report_compares_both_horizons(tmp_path) -> None:
     assert "一致" in content
     assert "不一致" in content
     assert "トヨタ自動車 &lt;普通株&gt;" in content
-    assert "rule_based_technical v2.5.0" in content
+    assert "rule_based_technical v2.6.0" in content
     assert "勝率、利益率、将来確率ではありません" in content
     assert "<script" not in content

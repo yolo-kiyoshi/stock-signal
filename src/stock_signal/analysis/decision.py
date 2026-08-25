@@ -17,6 +17,8 @@ from stock_signal.domain.analysis import (
     PatternDetection,
     PatternLifecycleAssessment,
     PatternLifecycleStatus,
+    PositionEntryAssessment,
+    PositionEntryPhase,
     TransitionPhase,
     TransitionReadiness,
 )
@@ -220,6 +222,7 @@ class LongOnlyDecisionPolicy:
         patterns: Sequence[PatternDetection],
         lifecycles: Sequence[PatternLifecycleAssessment],
         transition: TransitionReadiness,
+        position_entry: PositionEntryAssessment | None,
         checks: Sequence[EquityCheck],
         horizon_days: int,
     ) -> InvestmentDecision:
@@ -297,6 +300,16 @@ class LongOnlyDecisionPolicy:
                     "下降判定は空売りの実行指示には使用しません",
                 ),
                 tuple(cautions),
+            )
+
+        if horizon_days == 20 and position_entry is not None:
+            return self._decide_position_entry(
+                position_entry,
+                direction,
+                evidence_score,
+                freshness,
+                checks,
+                cautions,
             )
 
         if bullish:
@@ -433,15 +446,6 @@ class LongOnlyDecisionPolicy:
                     tuple(reasons),
                     tuple(cautions),
                 )
-            if horizon_days == 20 and direction is Direction.DOWN:
-                reasons.append("20日・60日を中心とする中期方向が下向きです")
-                return InvestmentDecision(
-                    InvestmentAction.WATCH,
-                    evidence_score,
-                    "上抜けは確認しましたが、中期トレンドの改善を待ちます",
-                    tuple(reasons),
-                    tuple(cautions),
-                )
             reasons.append(f"出来高が平常時中央値の{lead.volume_ratio:.2f}倍です")
             reasons.append(f"上抜け幅は{lead.breakout_atr:.2f} ATRです")
             return InvestmentDecision(
@@ -460,15 +464,6 @@ class LongOnlyDecisionPolicy:
                     InvestmentAction.WATCH,
                     round(transition.readiness_score, 1),
                     "日足データが古いため、更新後に転換初動を再確認します",
-                    tuple(reasons),
-                    tuple(cautions),
-                )
-            if horizon_days == 20 and direction is Direction.DOWN:
-                reasons.append("中期テクニカル方向がまだ下向きです")
-                return InvestmentDecision(
-                    InvestmentAction.WATCH,
-                    round(transition.readiness_score, 1),
-                    "転換初動は確認しましたが、中期方向の改善を待ちます",
                     tuple(reasons),
                     tuple(cautions),
                 )
@@ -535,6 +530,113 @@ class LongOnlyDecisionPolicy:
             round(evidence_score, 1),
             "完成済みブレイクパターンを待ちます",
             ("移動平均などの方向だけでは購入候補にしません",),
+            tuple(cautions),
+        )
+
+    @staticmethod
+    def _decide_position_entry(
+        assessment: PositionEntryAssessment,
+        direction: Direction,
+        direction_score: float,
+        freshness: EquityCheck,
+        checks: Sequence[EquityCheck],
+        cautions: Sequence[str],
+    ) -> InvestmentDecision:
+        reasons = [condition.description for condition in assessment.conditions]
+        evidence_score = round(
+            (assessment.readiness_score + direction_score) / 2,
+            1,
+        )
+        if assessment.phase is PositionEntryPhase.TREND_BROKEN:
+            return InvestmentDecision(
+                (
+                    InvestmentAction.AVOID_NEW_BUY
+                    if direction is Direction.DOWN
+                    else InvestmentAction.WATCH
+                ),
+                evidence_score,
+                assessment.summary,
+                tuple(reasons),
+                tuple(cautions),
+            )
+        if freshness.status is CheckStatus.UNAVAILABLE:
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "日足データが古いため、押し目条件を更新後に再確認します",
+                tuple(reasons),
+                tuple(cautions),
+            )
+
+        earnings = next(check for check in checks if check.key == "days_to_earnings")
+        if earnings.value is not None and 0 <= earnings.value <= 5:
+            reasons.append(f"{int(earnings.value)}日後に決算発表予定があります")
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "決算直前のため、押し目候補でも通過後の確認を優先します",
+                tuple(reasons),
+                tuple(cautions),
+            )
+        market = next(check for check in checks if check.key == "market_trend_score")
+        if market.value is not None and market.value < -10:
+            reasons.append(f"TOPIXトレンドは{market.value:.1f}点です")
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "市場全体が下向きのため、支持帯での定着を追加確認します",
+                tuple(reasons),
+                tuple(cautions),
+            )
+        relative = next(check for check in checks if check.key == "relative_strength")
+        if relative.value is not None and relative.value < -5:
+            reasons.append(f"TOPIX相対力は{relative.value:+.2f}%です")
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "市場対比の弱さが大きいため、反発の継続を追加確認します",
+                tuple(reasons),
+                tuple(cautions),
+            )
+
+        if assessment.phase is PositionEntryPhase.PULLBACK_CANDIDATE:
+            nearest = next(
+                (
+                    support
+                    for support in assessment.supports
+                    if support.touched and support.held
+                ),
+                assessment.supports[0] if assessment.supports else None,
+            )
+            if nearest is not None:
+                reasons.append(
+                    f"{nearest.label}の支持候補帯"
+                    f"{nearest.lower:.2f}〜{nearest.upper:.2f}を維持しました"
+                )
+            return InvestmentDecision(
+                InvestmentAction.BUY_CANDIDATE,
+                evidence_score,
+                assessment.summary,
+                tuple(reasons),
+                tuple(cautions),
+            )
+        if assessment.phase is PositionEntryPhase.SUPPORT_TEST:
+            summary = "支持候補を試していますが、反発確認前のため様子見です"
+        elif assessment.phase is PositionEntryPhase.APPROACHING_SUPPORT:
+            summary = "支持候補へ接近中です。接触後の終値維持と反発を待ちます"
+        elif assessment.phase is PositionEntryPhase.TREND_EXTENDED:
+            summary = "中期上昇トレンドですが、押し目から離れているため追随を急ぎません"
+        else:
+            summary = assessment.summary
+        if assessment.next_condition is not None:
+            reasons.append(
+                f"次の確認条件：{assessment.next_condition.description}"
+            )
+        return InvestmentDecision(
+            InvestmentAction.WATCH,
+            evidence_score,
+            summary,
+            tuple(reasons),
             tuple(cautions),
         )
 
