@@ -217,9 +217,9 @@ def test_lists_and_downloads_bulk_daily_bars() -> None:
         {"url": "https://download.example.invalid/2026-08-14.csv.gz"},
     ])
     csv_content = (
-        "Date,Code,AdjO,AdjH,AdjL,AdjC,AdjVo\n"
-        "2026-08-14,72030,2800,2850,2780,2830,1234000\n"
-    ).encode()
+        b"Date,Code,AdjO,AdjH,AdjL,AdjC,AdjVo\n"
+        b"2026-08-14,72030,2800,2850,2780,2830,1234000\n"
+    )
     binary_client = FakeBinaryHttpClient(csv_content)
     provider = JQuantsProvider(
         "secret",

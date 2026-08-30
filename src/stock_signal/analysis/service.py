@@ -12,7 +12,6 @@ from stock_signal.database import (
 from stock_signal.domain.analysis import AnalysisContext, AnalysisResult
 from stock_signal.domain.dashboard import WatchlistItem
 
-
 _ACTION_RANK = {
     "buy_candidate": 3,
     "avoid_new_buy": 2,

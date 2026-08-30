@@ -13,7 +13,6 @@ from stock_signal.database import load_daily_bars
 from stock_signal.domain.analysis import AnalysisContext, AnalysisResult, Direction
 from stock_signal.domain.market_data import DailyBar
 
-
 type ValidationStatus = Literal[
     "ready",
     "no_data",

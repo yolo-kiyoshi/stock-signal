@@ -4,15 +4,12 @@ import re
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from secrets import compare_digest
 from threading import Lock
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from plotly.offline import get_plotlyjs
+from fastapi.responses import JSONResponse
 
 from stock_signal.ai_review import (
     InvestmentReviewError,
@@ -48,8 +45,6 @@ from stock_signal.database import (
 )
 from stock_signal.persistence.engine import check_database
 
-WEB_DIRECTORY = Path(__file__).parent
-templates = Jinja2Templates(directory=WEB_DIRECTORY / "templates")
 settings = Settings.from_env()
 analysis_service = AnalysisService(
     settings.database_url, jquants_plan=settings.jquants_plan
@@ -72,6 +67,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def require_internal_api_token(request: Request, call_next):
+    """外部公開するJSON APIをNext.jsのBFFからの呼び出しに限定する。"""
+    if settings.api_auth_required and request.url.path.startswith("/api/v1/"):
+        authorization = request.headers.get("authorization", "")
+        scheme, _, supplied_token = authorization.partition(" ")
+        expected_token = settings.internal_api_token or ""
+        authenticated = (
+            scheme.lower() == "bearer"
+            and bool(supplied_token)
+            and compare_digest(supplied_token, expected_token)
+        )
+        if not authenticated:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "API認証が必要です"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return await call_next(request)
+
 TRANSITION_PHASE_LABELS = {
     "falling": "下降継続",
     "bottoming": "底固め観察",
@@ -90,9 +106,6 @@ POSITION_ENTRY_PHASE_LABELS = {
     "trend_broken": "中期トレンド未維持",
     "no_setup": "押し目条件なし",
 }
-app.mount("/static", StaticFiles(directory=WEB_DIRECTORY / "static"), name="static")
-
-
 def _plan_capabilities() -> list[dict[str, object]]:
     """画面とAPIで共通利用するJ-Quants契約機能を返す。"""
     paid_plan = settings.jquants_plan != "free"
@@ -394,97 +407,6 @@ def _validate_horizon(horizon: int) -> None:
             status_code=422,
             detail="予測期間は1、5、20営業日のいずれかで指定してください",
         )
-
-
-@app.get("/", response_class=HTMLResponse)
-def dashboard(
-    request: Request,
-    symbol: str | None = Query(None, pattern=r"^[0-9A-Z]{4}$"),
-):
-    watchlist = list_watchlist_items(settings.database_url)
-    positions = list_positions(settings.database_url)
-    registrations = list_watchlist_registrations(settings.database_url)
-    analyses = analysis_service.analyze_watchlist(5)
-    candidate_analyses = [item for item in analyses if item[1].status == "ready"]
-    watchlist_providers = {item.symbol: item.provider for item in watchlist}
-    watchlist_symbols = {item.symbol for item in watchlist}
-    candidate_action_counts = {
-        action: sum(
-            result.investment_decision is not None
-            and result.investment_decision.action.value == action
-            for _, result in candidate_analyses
-        )
-        for action in ("buy_candidate", "watch", "avoid_new_buy")
-    }
-    market_display_limit = min(settings.market_screening_limit, 500)
-    market_candidates = list_market_candidates(
-        settings.database_url,
-        limit=market_display_limit,
-    )
-    market_candidate_action_counts = {
-        action: sum(item["action"] == action for item in market_candidates)
-        for action in ("buy_candidate", "watch", "avoid_new_buy")
-    }
-    initial_candidate_scope = "market" if market_candidates else "watchlist"
-    initial_counts = (
-        market_candidate_action_counts
-        if initial_candidate_scope == "market"
-        else candidate_action_counts
-    )
-    initial_candidate_action = next(
-        (
-            action for action in ("buy_candidate", "watch", "avoid_new_buy")
-            if initial_counts[action]
-        ),
-        "buy_candidate",
-    )
-    normalized_symbol = symbol.strip().upper() if symbol else None
-    available_items = [*positions, *watchlist]
-    selected_item = next(
-        (
-            item
-            for item in available_items
-            if item.symbol == normalized_symbol
-        ),
-        positions[0] if positions else watchlist[0] if watchlist else None,
-    )
-    selected_symbol = selected_item.symbol if selected_item else None
-    selected_provider = selected_item.provider if selected_item else None
-    latest_date = max((result.as_of_date for _, result in analyses), default=None)
-    return templates.TemplateResponse(
-        request=request,
-        name="dashboard.html",
-        context={
-            "watchlist": watchlist,
-            "positions": positions,
-            "watchlists": list_watchlists(settings.database_url),
-            "registrations": registrations,
-            "jquants_plan": settings.jquants_plan,
-            "plan_capabilities": _plan_capabilities(),
-            "analyses": analyses,
-            "candidate_analyses": candidate_analyses,
-            "watchlist_providers": watchlist_providers,
-            "watchlist_symbols": watchlist_symbols,
-            "candidate_action_counts": candidate_action_counts,
-            "market_candidates": market_candidates,
-            "market_screening_limit": settings.market_screening_limit,
-            "market_display_limit": market_display_limit,
-            "market_candidate_action_counts": market_candidate_action_counts,
-            "initial_candidate_scope": initial_candidate_scope,
-            "initial_candidate_action": initial_candidate_action,
-            "transition_phase_labels": TRANSITION_PHASE_LABELS,
-            "selected_symbol": selected_symbol,
-            "selected_provider": selected_provider,
-            "latest_date": latest_date,
-            "openai_review_available": bool(settings.openai_api_key),
-            "openai_model": settings.openai_model,
-        },
-    )
-
-
-@app.get("/assets/plotly.min.js")
-def plotly_javascript() -> Response:
-    return Response(content=get_plotlyjs(), media_type="application/javascript")
 
 
 @app.get("/api/v1/health")

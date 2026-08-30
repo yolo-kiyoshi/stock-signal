@@ -9,7 +9,6 @@ from pathlib import Path
 from stock_signal.analysis.historical_validation import HistoricalValidationPoint
 from stock_signal.domain.analysis import Direction
 
-
 _DIRECTION_LABELS = {
     Direction.UP: "上昇",
     Direction.FLAT: "停滞",
@@ -102,7 +101,8 @@ def _render_result_cells(point: HistoricalValidationPoint, horizon: int) -> str:
     return f"""
       <td><span class="direction {predicted.value}">{_DIRECTION_LABELS[predicted]}</span>
         <small>{html.escape(action)}</small></td>
-      <td><span class="direction {actual.direction.value}">{_DIRECTION_LABELS[actual.direction]}</span>
+      <td><span class="direction {actual.direction.value}">
+        {_DIRECTION_LABELS[actual.direction]}</span>
         <small>{actual.target_date.isoformat()}</small></td>
       <td><span class="match {match_class}">{match_label}</span></td>
       <td class="number">{actual.return_percent:+.2f}%<small>{actual.move_atr:+.2f} ATR</small></td>
@@ -180,12 +180,14 @@ def render_historical_fit_report(
     .eyebrow {{ margin:0; font-size:11px; letter-spacing:.08em; }}
     .meta {{ margin:0; font-size:11px; }}
     .summary {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:16px 0; }}
-    .summary-card {{ padding:18px; border:1px solid var(--border); border-left:5px solid var(--accent);
+    .summary-card {{ padding:18px; border:1px solid var(--border);
+      border-left:5px solid var(--accent);
       border-radius:12px; background:var(--surface); }}
     .summary-card>div span,.summary-card>div strong {{ display:block; }}
     .summary-card>div span {{ color:var(--muted); font-size:11px; }}
     .summary-card>div strong {{ margin-top:2px; font-size:18px; }}
-    .summary-card dl {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:14px 0 8px; }}
+    .summary-card dl {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px;
+      margin:14px 0 8px; }}
     .summary-card dl div {{ padding:10px; border-radius:8px; background:#faf8f4; }}
     dt {{ color:var(--muted); font-size:10px; }} dd {{ margin:3px 0 0; font-weight:700; }}
     .summary-card p {{ margin:0; color:var(--muted); font-size:11px; }}
@@ -193,20 +195,25 @@ def render_historical_fit_report(
     .table-panel {{ overflow:hidden; }} .table-scroll {{ overflow-x:auto; }}
     table {{ width:100%; min-width:1080px; border-collapse:collapse; font-size:12px; }}
     caption {{ padding:0 0 12px; text-align:left; color:var(--muted); font-size:11px; }}
-    th,td {{ padding:11px 9px; border-bottom:1px solid var(--border); text-align:left; vertical-align:middle; }}
+    th,td {{ padding:11px 9px; border-bottom:1px solid var(--border); text-align:left;
+      vertical-align:middle; }}
     thead th {{ position:sticky; top:0; background:#faf8f4; color:var(--muted); font-size:10px; }}
     thead tr:first-child th {{ text-align:center; color:var(--text); font-size:11px; }}
-    tbody th {{ white-space:nowrap; }} td small,.number small {{ display:block; margin-top:3px; font-size:9px; }}
-    .direction,.match {{ display:inline-block; padding:4px 7px; border-radius:999px; font-weight:700; }}
+    tbody th {{ white-space:nowrap; }}
+    td small,.number small {{ display:block; margin-top:3px; font-size:9px; }}
+    .direction,.match {{ display:inline-block; padding:4px 7px; border-radius:999px;
+      font-weight:700; }}
     .direction.up {{ background:#e7f4ed; color:var(--up); }}
     .direction.down {{ background:#f9e9e9; color:var(--down); }}
     .direction.flat {{ background:#f5f0df; color:var(--flat); }}
     .match.matched {{ background:#e7f4ed; color:var(--up); }}
     .match.not-matched {{ background:#f9e9e9; color:var(--down); }}
-    .number {{ text-align:right; font-variant-numeric:tabular-nums; }} .unavailable {{ color:var(--muted); }}
+    .number {{ text-align:right; font-variant-numeric:tabular-nums; }}
+    .unavailable {{ color:var(--muted); }}
     footer {{ margin-top:12px; color:var(--muted); font-size:10px; line-height:1.6; }}
     @media (max-width:700px) {{ .summary {{ grid-template-columns:1fr; }}
-      .summary-card dl {{ grid-template-columns:1fr 1fr; }} main {{ width:min(100% - 20px,1500px); }} }}
+      .summary-card dl {{ grid-template-columns:1fr 1fr; }}
+      main {{ width:min(100% - 20px,1500px); }} }}
     @media print {{ body {{ background:#fff; }} main {{ width:100%; margin:0; }}
       header,.method,.table-panel,.summary-card {{ break-inside:avoid; box-shadow:none; }} }}
   </style>

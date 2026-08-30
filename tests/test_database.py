@@ -29,8 +29,8 @@ from stock_signal.database import (
     remove_watchlist_item,
     replace_earnings_calendar,
     replace_instruments,
-    search_instruments,
     request_watchlist_registration,
+    search_instruments,
     sqlite_path,
     update_watchlist_registration,
     upsert_daily_bars,
@@ -389,6 +389,8 @@ def test_instrument_master_and_positions_are_managed_independently(database_url)
 
     assert positions[0].symbol == "7203"
     assert positions[0].latest_close == Decimal("2830")
+    assert remove_position(database_url, "7203") is True
+    assert list_positions(database_url) == []
 
 
 def test_delisted_instrument_keeps_historical_daily_bars(database_url) -> None:
@@ -423,5 +425,3 @@ def test_delisted_instrument_keeps_historical_daily_bars(database_url) -> None:
     assert load_daily_bars(database_url, "9999", provider="jquants") == [bar]
     assert list_watchlist_items(database_url) == []
     assert {item.name for item in list_watchlists(database_url)} == {"ウォッチ"}
-    assert remove_position(database_url, "7203") is True
-    assert list_positions(database_url) == []

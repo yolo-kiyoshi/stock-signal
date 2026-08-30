@@ -9,6 +9,9 @@ class ConfigurationError(ValueError):
     """環境変数の設定値が不正な場合に送出する。"""
 
 
+INSECURE_LOCAL_API_TOKEN = "change-this-local-token-before-deploying"
+
+
 def subtract_years(reference: date, years: int) -> date:
     """月日を維持して指定年数だけ遡る。うるう日は2月28日へ丸める。"""
     try:
@@ -52,6 +55,8 @@ class Settings:
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.5"
     openai_max_output_tokens: int = 6_000
+    api_auth_required: bool = False
+    internal_api_token: str | None = None
 
     @property
     def jquants_rate_limit_per_minute(self) -> int:
@@ -77,6 +82,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        app_env = os.getenv("APP_ENV", "development").strip().lower()
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
         if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
             raise ConfigurationError("LOG_LEVEL is invalid")
@@ -114,9 +120,26 @@ class Settings:
             raise ConfigurationError(
                 "OPENAI_MAX_OUTPUT_TOKENS must be between 2000 and 20000"
             )
+        api_auth_required = _read_bool("API_AUTH_REQUIRED", False)
+        internal_api_token = os.getenv("INTERNAL_API_TOKEN") or None
+        if api_auth_required and (
+            internal_api_token is None or len(internal_api_token) < 32
+        ):
+            raise ConfigurationError(
+                "API認証を有効にする場合、INTERNAL_API_TOKENは"
+                "32文字以上で設定してください"
+            )
+        if (
+            app_env == "production"
+            and api_auth_required
+            and internal_api_token == INSECURE_LOCAL_API_TOKEN
+        ):
+            raise ConfigurationError(
+                "productionではINTERNAL_API_TOKENのローカル初期値を使用できません"
+            )
 
         return cls(
-            app_env=os.getenv("APP_ENV", "development").strip(),
+            app_env=app_env,
             log_level=log_level,
             database_url=database_url,
             market_data_provider=os.getenv(
@@ -131,6 +154,8 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_model=openai_model,
             openai_max_output_tokens=openai_max_output_tokens,
+            api_auth_required=api_auth_required,
+            internal_api_token=internal_api_token,
         )
 
     def safe_dict(self) -> dict[str, object]:
@@ -139,4 +164,7 @@ class Settings:
         values["jquants_api_key"] = "configured" if self.jquants_api_key else "unset"
         values["slack_webhook_url"] = "configured" if self.slack_webhook_url else "unset"
         values["openai_api_key"] = "configured" if self.openai_api_key else "unset"
+        values["internal_api_token"] = (
+            "configured" if self.internal_api_token else "unset"
+        )
         return values

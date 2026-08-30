@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 import stock_signal.web.app as web_app_module
 from stock_signal.ai_review import InvestmentReview, ReviewCitation
 from stock_signal.database import (
-    add_watchlist_item,
     replace_instruments,
     upsert_daily_bars,
 )
@@ -15,104 +14,30 @@ from stock_signal.domain.market_data import DailyBar
 from stock_signal.web.app import app
 
 
-def test_dashboard_is_japanese(monkeypatch) -> None:
+def test_json_api_can_require_bff_bearer_token(monkeypatch) -> None:
+    token = "local-test-token-with-at-least-32-characters"
     monkeypatch.setattr(
         web_app_module,
         "settings",
-        replace(web_app_module.settings, openai_api_key=None),
+        replace(
+            web_app_module.settings,
+            api_auth_required=True,
+            internal_api_token=token,
+        ),
     )
     with TestClient(app) as client:
-        response = client.get("/")
+        unauthorized = client.get("/api/v1/health")
+        authorized = client.get(
+            "/api/v1/health",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        removed_legacy_page = client.get("/")
 
-    assert response.status_code == 200
-    assert "TOMOSHIBIYORI" in response.text
-    assert "日足から、明日の判断に小さな灯を。" in response.text
-    assert 'lang="ja"' in response.text
-    assert 'id="sidebar-toggle"' in response.text
-    assert 'id="app-sidebar"' in response.text
-    assert 'data-selected-provider="' in response.text
-    assert 'role="tablist" aria-label="銘柄一覧の切り替え"' in response.text
-    assert 'id="watchlist-panel"' in response.text
-    assert 'id="positions-panel"' in response.text
-    assert 'id="candidates-panel"' in response.text
-    assert 'id="sidebar-search-input"' in response.text
-    assert "証券コード・銘柄名で検索" in response.text
-    assert 'role="tooltip"' in response.text
-    assert "保有銘柄の価格基準について" in response.text
-    assert "分析候補の注意事項" in response.text
-    assert "証券コードをまとめて追加" in response.text
-    assert "市場全体" in response.text
-    assert 'id="transition-phase-filter"' in response.text
-    assert "あと1条件" in response.text
-    assert "J-Quantsの調整済み日足は全市場分を保存しています" in response.text
-    assert "流動性上位" in response.text
-    assert "Light対象外。Standard以上" in response.text
-    assert 'aria-label="運用スタイル"' in response.text
-    assert "スイング" in response.text
-    assert "中長期の買い場" in response.text
-    assert 'data-horizon="1"' not in response.text
-    assert 'data-chart-indicator="moving-average"' in response.text
-    assert 'data-chart-indicator="rsi"' in response.text
-    assert 'data-chart-indicator="resistance"' in response.text
-    assert "移動平均線" in response.text
-    assert "抵抗帯候補" in response.text
-    assert 'id="ai-review-run"' in response.text
-    assert 'id="ai-review-result"' in response.text
-    assert "AI最終確認" in response.text
-    assert "最新情報を検索して確認" in response.text
-    assert "APIキー未設定" in response.text
-
-
-def test_hidden_elements_have_priority_over_layout_styles() -> None:
-    with TestClient(app) as client:
-        response = client.get("/static/dashboard.css")
-
-    assert response.status_code == 200
-    assert "[hidden] { display: none !important; }" in response.text
-    assert ".watchlist-delete" in response.text
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in response.text
-    assert "overflow: hidden" in response.text
-    assert "overflow-y: auto" in response.text
-    assert "scrollbar-gutter: stable" in response.text
-    assert ".sidebar-search" in response.text
-    assert ".help-tooltip-content" in response.text
-    assert "flex-direction: column" in response.text
-    assert ".market-watch-add" in response.text
-    assert ".market-signal-row" in response.text
-    assert ".position-size-calculator" in response.text
-    assert ".chart-indicator-toolbar" in response.text
-    assert ".indicator-toggles" in response.text
-    assert ".ai-review-section" in response.text
-    assert ".ai-review-report-text" in response.text
-    assert ".position-entry-assessment" in response.text
-    assert ".support-level-list" in response.text
-
-
-def test_market_candidate_watchlist_control_is_wired() -> None:
-    with TestClient(app) as client:
-        response = client.get("/static/dashboard.js")
-
-    assert response.status_code == 200
-    assert '.market-watch-add:not(.is-added)' in response.text
-    assert "/api/v1/watchlists/" in response.text
-    assert "ウォッチリストへ追加しています" in response.text
-    assert "テクニカル方向は現在の値動き" in response.text
-    assert "確率ではありません" in response.text
-    assert "transition-phase-filter" in response.text
-    assert "updateHorizonGuide" in response.text
-    assert "企業価値は評価しない" in response.text
-    assert "reloadWithSelectedSymbol" in response.text
-    assert "許容損失から購入上限" in response.text
-    assert "エンジン信頼度レポート" in response.text
-    assert "検証実績は未生成" in response.text
-    assert "renderChart" in response.text
-    assert "resistance_bands" in response.text
-    assert "RSI" in response.text
-    assert "ai-investment-review" in response.text
-    assert "safeExternalUrl" in response.text
-    assert "position_entry" in response.text
-    assert "支持候補" in response.text
-    assert "中長期の支持候補" in response.text
+    assert unauthorized.status_code == 401
+    assert unauthorized.json()["detail"] == "API認証が必要です"
+    assert unauthorized.headers["www-authenticate"] == "Bearer"
+    assert authorized.status_code == 200
+    assert removed_legacy_page.status_code == 404
 
 
 def test_ai_review_capability_is_explicit_when_key_is_missing(monkeypatch) -> None:
@@ -329,23 +254,6 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
         "relative_strength", "beta_topix", "sector_trend_score", "days_to_earnings",
         "disclosure_event",
     }
-
-
-def test_dashboard_can_select_a_newly_added_watchlist_symbol(database_url) -> None:
-    add_watchlist_item(
-        database_url,
-        symbol="7203",
-        provider="jquants",
-        display_name="トヨタ自動車",
-        exchange="プライム",
-        currency="JPY",
-    )
-
-    with TestClient(app) as client:
-        response = client.get("/?symbol=7203")
-
-    assert response.status_code == 200
-    assert 'data-selected-symbol="7203"' in response.text
 
 
 def test_invalid_horizon_is_rejected() -> None:

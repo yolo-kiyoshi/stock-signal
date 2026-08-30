@@ -3,8 +3,11 @@
 保有銘柄、ウォッチリスト、市場全体候補の日足とルールベース分析を確認するための
 投資判断アプリです。「日足から、明日の判断に小さな灯を。」をコンセプトに、
 未来を断定せず、毎日の投資判断に使える手掛かりを提示します。
-Python 3.12、FastAPI、PostgreSQL、SQLAlchemy、Alembic、Plotly、Docker Composeを
-使用します。
+Python 3.12、FastAPI、Next.js、Auth.js、PostgreSQL、SQLAlchemy、Alembic、Plotly、
+Docker Composeを使用します。
+
+Next.jsへの画面移行、本人認証、BFF（Backend for Frontend）、外部公開前の構成は、
+[フロントエンド・認証・実行環境設計](docs/frontend-auth-architecture.md)に分けて記載しています。
 
 アプリ名は`TOMOSHIBIYORI`です。既存利用者との互換性を保つため、リポジトリ名、
 Pythonパッケージ名、CLIコマンドは引き続き`stock-signal`を使用します。
@@ -27,22 +30,33 @@ docker compose up -d db
 docker compose run --rm migrate
 ```
 
-`app`、`migrate`、`batch`、`web`、`test`は同じ`tomoshibiyori:local`イメージを使います。
-`pyproject.toml`の依存関係を変更した場合は、先に`docker compose build app`を実行してください。
+`app`、`migrate`、`batch`、`api`、`test`は同じ`tomoshibiyori:local`イメージを使い、
+`frontend`はNext.js専用イメージを使います。依存関係を変更した場合は、対応するイメージを
+再ビルドしてください。
 
-`web`と`batch`の起動時にも、依存関係として`migrate`が先に実行されます。DBスキーマは
+`api`と`batch`の起動時にも、依存関係として`migrate`が先に実行されます。DBスキーマは
 アプリ起動コードから暗黙に変更せず、Alembicの版管理されたマイグレーションで更新します。
 
 ## Webアプリケーション
 
+### Next.js画面
+
+外部公開を見据えた新しい画面は、Next.js、Auth.js、FastAPIの認証付きAPIで構成します。
+ローカルでは次のコマンドでPostgreSQL、マイグレーション、分析API、フロントエンドを起動します。
+
 ```bash
-docker compose up --build web
+docker compose up --build frontend
 ```
 
-ブラウザで`http://localhost:8000`を開きます。
+ブラウザで`http://localhost:3000`を開きます。初期値ではローカル開発時だけ本人認証を省略します。
+GitHub認証をローカルで確認する場合は、`.env`の`AUTH_ALLOW_INSECURE_LOCAL=false`とし、
+`AUTH_SECRET`、`AUTH_GITHUB_ID`、`AUTH_GITHUB_SECRET`、`AUTH_ALLOWED_GITHUB_ID`を設定してください。
+FastAPIの分析APIは`http://localhost:8001`で起動しますが、Bearerトークン必須であり、ブラウザから
+直接利用せずNext.jsのBFFを経由します。現段階では外部サービスへデプロイしません。
 
-Webコンテナには市場データAPIキーを渡しません。画面はPostgreSQLへ保存済みのデータだけを
-参照します。
+旧FastAPI＋Jinja画面は、主要機能の移植完了に伴い削除しました。FastAPIはBearer認証付きの
+JSON APIに専念し、画面はNext.jsだけを使用します。`api`と`frontend`には市場データAPIキーを
+渡さず、画面はPostgreSQLへ保存済みのデータだけを参照します。
 
 画面では次を確認できます。
 
@@ -100,7 +114,7 @@ Responses APIへ渡し、`web_search`で最新の公式発表や関連報道と�
 実行せず、「最新情報を検索して確認」を押した場合だけAPIを呼びます。AIはルールベース分析を
 置き換えず、検討継続、保留、新規購入見送りの参考区分、反対材料、未確認事項を提示します。
 
-`.env`へ次を設定してください。APIキーはWebコンテナ内だけで読み、HTMLやAPIレスポンスへ
+`.env`へ次を設定してください。APIキーはFastAPIの`api`コンテナ内だけで読み、HTMLやAPIレスポンスへ
 含めません。
 
 ```dotenv
@@ -113,7 +127,7 @@ OPENAI_MAX_OUTPUT_TOKENS=6000
 
 ```bash
 docker compose build app
-docker compose up -d --force-recreate web
+docker compose up -d --force-recreate api frontend
 ```
 
 実行ごとにモデルとWeb検索の利用料金が発生する場合があります。回答は保存せず、その場で画面へ
@@ -268,8 +282,8 @@ docker compose run --rm app stock-signal jquants-bulk-bootstrap
 # 3. 分析結果を再生成
 docker compose run --rm batch
 
-# 4. Pythonコードを読み直すためWebコンテナを再作成
-docker compose up -d --force-recreate web
+# 4. Pythonコードを読み直すためAPIを再作成し、画面を更新
+docker compose up -d --force-recreate api frontend
 ```
 
 ブラウザの再読み込みだけでは、起動済みUvicornプロセスが読み込んだPythonコードは更新されません。
@@ -359,8 +373,8 @@ docker compose run --rm app stock-signal jquants-bulk-bootstrap
 # 2. 初回投入後に、分析スナップショットと市場全体候補を生成
 docker compose run --rm batch
 
-# 3. Webを再起動または更新して結果を確認
-docker compose up -d web
+# 3. Next.js画面を起動または更新して結果を確認
+docker compose up -d frontend
 ```
 
 日々実行するのは2番目の`batch`です。終値と配信データの確定後、余裕を持って平日19時頃に
@@ -488,7 +502,7 @@ docker compose build
 docker compose run --rm app stock-signal init-db
 docker compose run --rm app stock-signal jquants-bulk-bootstrap
 docker compose run --rm batch
-docker compose up -d web
+docker compose up -d frontend
 ```
 
 ## HTTP API

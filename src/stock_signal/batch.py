@@ -304,34 +304,35 @@ class DailyBatchRunner:
         return summary
 
     def _screen_market(self) -> BatchItemResult:
-        """流動性上位の全市場銘柄を5営業日基準で分析して保存する。"""
+        """流動性上位の全市場銘柄をスイング・中長期基準で分析して保存する。"""
         try:
             universe = list_analysis_universe(
                 self.settings.database_url,
                 limit=self.settings.market_screening_limit,
             )
-            analyses = self.analysis_service.analyze_items(universe, 5)
-            clear_analysis_snapshots(
-                self.settings.database_url,
-                provider="jquants",
-                horizon_days=5,
-            )
             stored = 0
-            for (_, result), item in zip(analyses, universe, strict=True):
-                decision = result.investment_decision
-                transition = result.transition_readiness
-                if result.status != "ready" or not result.as_of_date or decision is None:
-                    continue
-                upsert_analysis_snapshot(
+            for horizon in (5, 20):
+                analyses = self.analysis_service.analyze_items(universe, horizon)
+                clear_analysis_snapshots(
                     self.settings.database_url,
-                    symbol=item.symbol,
-                    provider=item.provider,
-                    as_of_date=date.fromisoformat(result.as_of_date),
-                    horizon_days=5,
-                    direction=result.direction.value,
-                    action=decision.action.value,
-                    evidence_score=decision.evidence_score,
-                    analysis_json={
+                    provider="jquants",
+                    horizon_days=horizon,
+                )
+                for (_, result), item in zip(analyses, universe, strict=True):
+                    decision = result.investment_decision
+                    transition = result.transition_readiness
+                    if result.status != "ready" or not result.as_of_date or decision is None:
+                        continue
+                    upsert_analysis_snapshot(
+                        self.settings.database_url,
+                        symbol=item.symbol,
+                        provider=item.provider,
+                        as_of_date=date.fromisoformat(result.as_of_date),
+                        horizon_days=horizon,
+                        direction=result.direction.value,
+                        action=decision.action.value,
+                        evidence_score=decision.evidence_score,
+                        analysis_json={
                         "summary": decision.summary,
                         "reasons": list(decision.reasons),
                         "engine_id": result.engine_id,
@@ -360,9 +361,9 @@ class DailyBatchRunner:
                                 "risk_reward_ratio": transition.risk_reward_ratio,
                             }
                         ),
-                    },
-                )
-                stored += 1
+                        },
+                    )
+                    stored += 1
             return BatchItemResult(
                 "@SCREEN",
                 "rule_based",

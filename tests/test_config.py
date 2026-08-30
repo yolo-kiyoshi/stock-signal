@@ -25,6 +25,8 @@ def test_defaults(monkeypatch) -> None:
         "OPENAI_API_KEY",
         "OPENAI_MODEL",
         "OPENAI_MAX_OUTPUT_TOKENS",
+        "API_AUTH_REQUIRED",
+        "INTERNAL_API_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -44,6 +46,8 @@ def test_defaults(monkeypatch) -> None:
     assert settings.openai_api_key is None
     assert settings.openai_model == "gpt-5.5"
     assert settings.openai_max_output_tokens == 6_000
+    assert settings.api_auth_required is False
+    assert settings.internal_api_token is None
 
 
 def test_invalid_openai_output_limit(monkeypatch) -> None:
@@ -57,6 +61,25 @@ def test_invalid_boolean(monkeypatch) -> None:
     monkeypatch.setenv("NOTIFICATION_DRY_RUN", "sometimes")
 
     with pytest.raises(ConfigurationError, match="boolean"):
+        Settings.from_env()
+
+
+def test_api_auth_requires_long_internal_token(monkeypatch) -> None:
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "short")
+
+    with pytest.raises(ConfigurationError, match="INTERNAL_API_TOKEN"):
+        Settings.from_env()
+
+
+def test_production_rejects_local_internal_token(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("API_AUTH_REQUIRED", "true")
+    monkeypatch.setenv(
+        "INTERNAL_API_TOKEN", "change-this-local-token-before-deploying"
+    )
+
+    with pytest.raises(ConfigurationError, match="ローカル初期値"):
         Settings.from_env()
 
 
@@ -77,6 +100,7 @@ def test_safe_dict_does_not_reveal_secrets(monkeypatch) -> None:
     monkeypatch.setenv("JQUANTS_API_KEY", "jquants-secret")
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://example.invalid/secret")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "internal-secret-value-for-testing-123")
 
     safe_settings = Settings.from_env().safe_dict()
 
@@ -84,4 +108,5 @@ def test_safe_dict_does_not_reveal_secrets(monkeypatch) -> None:
     assert safe_settings["jquants_api_key"] == "configured"
     assert safe_settings["slack_webhook_url"] == "configured"
     assert safe_settings["openai_api_key"] == "configured"
+    assert safe_settings["internal_api_token"] == "configured"
     assert "secret" not in repr(safe_settings)

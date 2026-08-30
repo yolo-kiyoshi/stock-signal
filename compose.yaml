@@ -68,13 +68,15 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  web:
+  api:
     <<: *stock-signal
     environment:
       <<: *common-environment
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.5}
       OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-6000}
+      API_AUTH_REQUIRED: "true"
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-this-local-token-before-deploying}
     command:
       - uvicorn
       - stock_signal.web.app:app
@@ -83,10 +85,48 @@ services:
       - --port
       - "8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          request = urllib.request.Request('http://127.0.0.1:8000/api/v1/health');
+          request.add_header('Authorization', 'Bearer ' + os.environ['INTERNAL_API_TOKEN']);
+          urllib.request.urlopen(request, timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 6
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  frontend:
+    image: tomoshibiyori-frontend:local
+    build:
+      context: ./frontend
+      target: development
+    command: ["pnpm", "dev", "--hostname", "0.0.0.0"]
+    environment:
+      FASTAPI_INTERNAL_URL: http://api:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-change-this-local-token-before-deploying}
+      AUTH_SECRET: ${AUTH_SECRET:-change-this-auth-secret-before-deploying}
+      AUTH_TRUST_HOST: "true"
+      AUTH_ALLOW_INSECURE_LOCAL: ${AUTH_ALLOW_INSECURE_LOCAL:-true}
+      AUTH_GITHUB_ID: ${AUTH_GITHUB_ID:-}
+      AUTH_GITHUB_SECRET: ${AUTH_GITHUB_SECRET:-}
+      AUTH_ALLOWED_GITHUB_ID: ${AUTH_ALLOWED_GITHUB_ID:-}
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-next-cache:/app/.next
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
 
   test-db:
     image: postgres:17-alpine
@@ -115,3 +155,5 @@ services:
 
 volumes:
   postgres-data:
+  frontend-node-modules:
+  frontend-next-cache:
