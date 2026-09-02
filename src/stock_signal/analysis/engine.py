@@ -12,6 +12,7 @@ from stock_signal.analysis.base import (
 )
 from stock_signal.analysis.decision import LongOnlyDecisionPolicy
 from stock_signal.analysis.horizons import get_horizon_profile
+from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.analysis.lifecycle import PatternLifecycleEvaluator
 from stock_signal.analysis.patterns import TechnicalPatternDetector
 from stock_signal.analysis.position_entry import PositionEntryEvaluator
@@ -24,6 +25,7 @@ from stock_signal.domain.analysis import (
     Direction,
     InvestmentAction,
     InvestmentDecision,
+    PatternDetection,
     PatternLifecycleAssessment,
     PatternLifecycleStatus,
 )
@@ -34,7 +36,7 @@ class RuleBasedAnalysisEngine:
     """注入されたルールを集計する、決定論的な分析エンジン。"""
 
     engine_id = "rule_based_technical"
-    version = "2.7.0"
+    version = "2.9.0"
 
     def __init__(
         self,
@@ -97,10 +99,29 @@ class RuleBasedAnalysisEngine:
             lifecycle_by_type = {
                 item.pattern_type: item for item in pattern_lifecycles
             }
-            factors += tuple(
-                self._pattern_factor(pattern, lifecycle_by_type.get(pattern.pattern_type))
-                for pattern in latest_patterns
-            )
+            risk_unit = wilder_atr(ordered) or max(float(ordered[-1].close) * 0.01, 0.01)
+            for pattern_group in self._group_patterns(latest_patterns, risk_unit):
+                representative = max(
+                    pattern_group,
+                    key=lambda item: item.fit_score,
+                )
+                factors += (
+                    self._pattern_factor(
+                        representative,
+                        lifecycle_by_type.get(representative.pattern_type),
+                    ),
+                )
+                if len(pattern_group) > 1:
+                    names = "・".join(item.name for item in pattern_group)
+                    factors += (
+                        AnalysisFactor(
+                            "chart_pattern_confluence",
+                            "同一ブレイクの複合確認",
+                            representative.direction,
+                            4.0,
+                            f"{names}は同じ価格イベントとして統合し、補助加点だけ行います",
+                        ),
+                    )
         totals: dict[Direction, float] = defaultdict(float)
         for factor in factors:
             totals[factor.direction] += factor.score
@@ -166,6 +187,32 @@ class RuleBasedAnalysisEngine:
         )
 
     @staticmethod
+    def _group_patterns(
+        patterns: Sequence[PatternDetection],
+        risk_unit: float,
+    ) -> tuple[tuple[PatternDetection, ...], ...]:
+        """同日・同方向・近接水準の検出を一つの価格イベントへまとめる。"""
+        groups: list[list[PatternDetection]] = []
+        tolerance = max(risk_unit * 0.25, 0.01)
+        for pattern in sorted(patterns, key=lambda item: item.fit_score, reverse=True):
+            matched = next(
+                (
+                    group
+                    for group in groups
+                    if group[0].detected_at == pattern.detected_at
+                    and group[0].direction is pattern.direction
+                    and abs(group[0].breakout_level - pattern.breakout_level)
+                    <= tolerance
+                ),
+                None,
+            )
+            if matched is None:
+                groups.append([pattern])
+            else:
+                matched.append(pattern)
+        return tuple(tuple(group) for group in groups)
+
+    @staticmethod
     def _pattern_factor(
         pattern,
         lifecycle: PatternLifecycleAssessment | None,
@@ -203,6 +250,14 @@ class RuleBasedAnalysisEngine:
                 pattern.direction,
                 round(20 + pattern.fit_score * 0.15, 1),
                 f"{pattern.description}。{lifecycle.summary}",
+            )
+        if lifecycle.status is PatternLifecycleStatus.OVEREXTENDED:
+            return AnalysisFactor(
+                f"chart_pattern_overextended:{pattern.pattern_type.value}",
+                f"{pattern.name}の追随回避",
+                Direction.FLAT,
+                16.0,
+                f"{lifecycle.summary}。過去パターンは現在方向へ加点しません",
             )
         if lifecycle.status is PatternLifecycleStatus.MONITORING:
             return AnalysisFactor(

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from statistics import fmean
+from statistics import fmean, median
 
-from stock_signal.analysis.indicators import simple_moving_average_series, wilder_atr
+from stock_signal.analysis.indicators import (
+    resistance_bands,
+    simple_moving_average_series,
+    wilder_atr,
+)
 from stock_signal.domain.analysis import (
     PositionEntryAssessment,
     PositionEntryCondition,
@@ -21,6 +25,8 @@ class PositionEntryEvaluator:
     extended_from_support_atr = 1.5
     trend_break_atr = 0.5
     invalidation_buffer_atr = 0.5
+    support_touch_lookback = 3
+    minimum_volume_ratio = 0.8
 
     def evaluate(self, bars: Sequence[DailyBar]) -> PositionEntryAssessment:
         ordered = tuple(sorted(bars, key=lambda bar: bar.trade_date))
@@ -105,6 +111,20 @@ class PositionEntryEvaluator:
             and current >= float(latest.open)
             and close_position >= 0.6
         )
+        follow_through_confirmed = (
+            closes[-1] > closes[-2] > closes[-3]
+            and (closes[-1] - closes[-3]) / atr >= 0.5
+        )
+        prior_volumes = [bar.volume for bar in ordered[-61:-1] if bar.volume > 0]
+        volume_ratio = None
+        if len(prior_volumes) >= 20:
+            baseline_volume = median(prior_volumes)
+            if baseline_volume > 0:
+                volume_ratio = latest.volume / baseline_volume
+        participation_confirmed = (
+            (volume_ratio is not None and volume_ratio >= self.minimum_volume_ratio)
+            or follow_through_confirmed
+        )
         support_touched_and_held = bool(held_touches)
         conditions = (
             PositionEntryCondition(
@@ -151,6 +171,21 @@ class PositionEntryEvaluator:
                     )
                 ),
             ),
+            PositionEntryCondition(
+                "participation_confirmation",
+                "反発の継続または出来高を確認",
+                participation_confirmed,
+                (
+                    f"出来高は平常時の{volume_ratio:.2f}倍です"
+                    if volume_ratio is not None
+                    and volume_ratio >= self.minimum_volume_ratio
+                    else (
+                        "2営業日続けて上昇し、合計0.5 ATR以上反発しました"
+                        if follow_through_confirmed
+                        else "出来高0.8倍以上または2日間の反発継続を待ちます"
+                    )
+                ),
+            ),
         )
         satisfied = sum(condition.satisfied for condition in conditions)
         unmet = [condition for condition in conditions if not condition.satisfied]
@@ -163,7 +198,11 @@ class PositionEntryEvaluator:
                 "中期上昇トレンドを維持できていないため、"
                 "安値だけでは買い場にしません"
             )
-        elif support_touched_and_held and rebound_confirmed:
+        elif (
+            support_touched_and_held
+            and rebound_confirmed
+            and participation_confirmed
+        ):
             phase = PositionEntryPhase.PULLBACK_CANDIDATE
             summary = (
                 "中期上昇トレンド内で支持候補への接触と"
@@ -197,6 +236,13 @@ class PositionEntryEvaluator:
                 0.01,
                 held_touches[0].lower - self.invalidation_buffer_atr * atr,
             )
+        target = self._target_price(ordered, current, atr)
+        risk_reward = None
+        if invalidation is not None and target is not None:
+            downside = current - invalidation
+            upside = target - current
+            if downside > 0 and upside > 0:
+                risk_reward = upside / downside
         return PositionEntryAssessment(
             phase=phase,
             satisfied_conditions=satisfied,
@@ -211,6 +257,24 @@ class PositionEntryEvaluator:
             invalidation_price=(
                 round(invalidation, 4) if invalidation is not None else None
             ),
+            target_price=round(target, 4) if target is not None else None,
+            risk_reward_ratio=(
+                round(risk_reward, 2) if risk_reward is not None else None
+            ),
+            volume_ratio=(
+                round(volume_ratio, 2) if volume_ratio is not None else None
+            ),
+            support_touch_age_days=(
+                min(
+                    support.touch_age_days
+                    for support in held_touches
+                    if support.touch_age_days is not None
+                )
+                if any(
+                    support.touch_age_days is not None for support in held_touches
+                )
+                else None
+            ),
         )
 
     def _price_level(
@@ -223,9 +287,16 @@ class PositionEntryEvaluator:
     ) -> PositionSupportLevel:
         lower = level - self.support_band_atr * atr
         upper = level + self.support_band_atr * atr
-        latest = bars[-1]
-        current = float(latest.close)
-        touched = float(latest.low) <= upper and float(latest.high) >= lower
+        current = float(bars[-1].close)
+        touch_age = next(
+            (
+                age
+                for age, bar in enumerate(reversed(bars[-self.support_touch_lookback:]))
+                if float(bar.low) <= upper and float(bar.high) >= lower
+            ),
+            None,
+        )
+        touched = touch_age is not None
         held = current >= lower
         return PositionSupportLevel(
             key=key,
@@ -237,8 +308,37 @@ class PositionEntryEvaluator:
             touched=touched,
             held=held,
             description=(
-                f"{label}{level:.2f}を含む±{self.support_band_atr:.2f} ATR帯です"
+                f"{label}{level:.2f}を含む±{self.support_band_atr:.2f} ATR帯です。"
+                + (
+                    f"{touch_age}営業日前に接触しました"
+                    if touch_age is not None
+                    else "直近3営業日の接触はありません"
+                )
             ),
+            touch_age_days=touch_age,
+        )
+
+    @staticmethod
+    def _target_price(
+        bars: Sequence[DailyBar],
+        current: float,
+        atr: float,
+    ) -> float | None:
+        """上値抵抗帯、なければ過去高値から保守的な参考目標を選ぶ。"""
+        bands = resistance_bands(bars, lookback=120)
+        above = [band.center for band in bands if band.center > current + 0.1 * atr]
+        if above:
+            return min(above)
+        prior_highs = sorted(
+            {
+                max(float(bar.high) for bar in bars[-window - 1:-1])
+                for window in (20, 60, 120)
+                if len(bars) > window
+            }
+        )
+        return next(
+            (price for price in prior_highs if price > current + 0.1 * atr),
+            None,
         )
 
     def _former_resistance_support(

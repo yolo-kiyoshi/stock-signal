@@ -12,6 +12,7 @@ from stock_signal.domain.market_data import (
     ListedInstrument,
     SymbolMatch,
 )
+from stock_signal.domain.market_environment import MarketObservation
 
 
 class MarketDataError(RuntimeError):
@@ -75,6 +76,13 @@ class MarketUniverseProvider(Protocol):
     def fetch_market_daily_prices(
         self, start: date, end: date
     ) -> Sequence[DailyBar]: ...
+
+
+class MarketEnvironmentProvider(Protocol):
+    """東京市場の寄り付き前に参照する外部市場指標の取得契約。"""
+
+    def fetch_market_environment(self) -> Sequence[MarketObservation]:
+        """取得可能な最新値と、その直前値を指標ごとに返す。"""
 
     def fetch_daily_prices(
         self,

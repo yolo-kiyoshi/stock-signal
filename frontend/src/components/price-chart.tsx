@@ -9,7 +9,7 @@ import {
   LineSeries,
   type Time,
 } from "lightweight-charts";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { DailyBarsResponse } from "@/types/api";
 
@@ -31,6 +31,37 @@ const movingAverageColors: Record<number, string> = {
 
 export function PriceChart({ payload, horizon, indicators }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
+  const fullRangeRef = useRef({ from: 0, to: 0 });
+  const [zoomPercent, setZoomPercent] = useState(100);
+
+  function zoom(factor: number): void {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const fullRange = fullRangeRef.current;
+    const fullSpan = Math.max(fullRange.to - fullRange.from, 1);
+    const visibleRange = chart.timeScale().getVisibleLogicalRange() ?? fullRange;
+    const visibleSpan = Math.max(Number(visibleRange.to) - Number(visibleRange.from), 1);
+    const nextSpan = Math.min(fullSpan, Math.max(10, visibleSpan * factor));
+    if (nextSpan >= fullSpan) {
+      chart.timeScale().fitContent();
+      setZoomPercent(100);
+      return;
+    }
+    const center = (Number(visibleRange.from) + Number(visibleRange.to)) / 2;
+    const unclampedFrom = center - nextSpan / 2;
+    const from = Math.min(
+      Math.max(unclampedFrom, fullRange.from),
+      fullRange.to - nextSpan,
+    );
+    chart.timeScale().setVisibleLogicalRange({ from, to: from + nextSpan });
+    setZoomPercent(Math.round((fullSpan / nextSpan) * 100));
+  }
+
+  function resetZoom(): void {
+    chartRef.current?.timeScale().fitContent();
+    setZoomPercent(100);
+  }
 
   useEffect(() => {
     const container = containerRef.current;
@@ -49,7 +80,22 @@ export function PriceChart({ payload, horizon, indicators }: Props) {
       },
       rightPriceScale: { borderColor: "#d8ddd5" },
       timeScale: { borderColor: "#d8ddd5", timeVisible: false },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        mouseWheel: false,
+        pinch: false,
+        axisPressedMouseMove: false,
+        axisDoubleClickReset: false,
+      },
     });
+    chartRef.current = chart;
+    fullRangeRef.current = { from: 0, to: payload.bars.length - 1 };
+    setZoomPercent(100);
     const candles = chart.addSeries(CandlestickSeries, {
       upColor: "#267551",
       downColor: "#b5453e",
@@ -154,9 +200,20 @@ export function PriceChart({ payload, horizon, indicators }: Props) {
     resizeObserver.observe(container);
     return () => {
       resizeObserver.disconnect();
+      if (chartRef.current === chart) chartRef.current = null;
       chart.remove();
     };
   }, [payload, horizon, indicators]);
 
-  return <div ref={containerRef} className="price-chart" aria-label="日足チャート" />;
+  return (
+    <div className="price-chart-shell">
+      <div className="chart-zoom-controls" role="group" aria-label="チャートの拡大縮小">
+        <span>表示 {zoomPercent}%</span>
+        <button type="button" onClick={() => zoom(0.75)} aria-label="チャートを拡大" title="チャートを拡大">＋</button>
+        <button type="button" onClick={() => zoom(1.35)} aria-label="チャートを縮小" title="チャートを縮小">−</button>
+        <button type="button" onClick={resetZoom}>全体</button>
+      </div>
+      <div ref={containerRef} className="price-chart" aria-label="日足チャート" />
+    </div>
+  );
 }

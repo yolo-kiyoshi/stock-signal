@@ -37,18 +37,18 @@ from stock_signal.database import (
     list_watchlist_registrations,
     list_watchlists,
     load_daily_bars,
+    load_latest_market_regime_snapshot,
     remove_position,
     remove_watchlist_item,
     request_watchlist_registration,
     search_instruments,
     upsert_position,
 )
+from stock_signal.market_environment import market_regime_as_dict
 from stock_signal.persistence.engine import check_database
 
 settings = Settings.from_env()
-analysis_service = AnalysisService(
-    settings.database_url, jquants_plan=settings.jquants_plan
-)
+analysis_service = AnalysisService(settings.database_url, jquants_plan=settings.jquants_plan)
 ai_review_lock = Lock()
 
 
@@ -88,15 +88,25 @@ async def require_internal_api_token(request: Request, call_next):
             )
     return await call_next(request)
 
+
 TRANSITION_PHASE_LABELS = {
     "falling": "下降継続",
     "bottoming": "底固め観察",
     "preparing": "転換準備",
     "one_gate_remaining": "あと1条件",
     "early_reversal": "転換初動",
+    "breakout_confirmed": "上抜け確認",
     "uptrend": "上昇継続",
     "caution": "警戒",
     "unknown": "未評価",
+}
+ENTRY_STAGE_LABELS = {
+    "setup_confirmed": "形を確認",
+    "conditional_entry": "条件付き候補",
+    "entry_ready": "購入条件が整う",
+    "wait_for_pullback": "押し目待ち",
+    "avoid": "新規購入を避ける",
+    "not_applicable": "買い条件なし",
 }
 POSITION_ENTRY_PHASE_LABELS = {
     "pullback_candidate": "押し目反発を確認",
@@ -106,14 +116,14 @@ POSITION_ENTRY_PHASE_LABELS = {
     "trend_broken": "中期トレンド未維持",
     "no_setup": "押し目条件なし",
 }
+
+
 def _plan_capabilities() -> list[dict[str, object]]:
     """画面とAPIで共通利用するJ-Quants契約機能を返す。"""
     paid_plan = settings.jquants_plan != "free"
     full_indices = settings.jquants_plan in {"standard", "premium"}
     topix_synced = data_sync_succeeded(settings.database_url, "jquants_topix")
-    earnings_synced = data_sync_succeeded(
-        settings.database_url, "jquants_earnings_calendar"
-    )
+    earnings_synced = data_sync_succeeded(settings.database_url, "jquants_earnings_calendar")
     bulk_status = bulk_sync_status(
         settings.database_url,
         "/equities/bars/daily",
@@ -143,9 +153,7 @@ def _plan_capabilities() -> list[dict[str, object]]:
             "key": "bulk_daily_prices",
             "label": "全市場の日足",
             "status": (
-                "plan_unavailable"
-                if not paid_plan
-                else "ready" if bulk_synced else "pending_sync"
+                "plan_unavailable" if not paid_plan else "ready" if bulk_synced else "pending_sync"
             ),
             "message": (
                 "Light以上が必要です"
@@ -153,8 +161,7 @@ def _plan_capabilities() -> list[dict[str, object]]:
                 else "全市場の調整済み日足を同期済み"
                 if bulk_synced
                 else (
-                    f"調整済み化が未完了のファイルが"
-                    f"{bulk_status['incomplete']}件あります"
+                    f"調整済み化が未完了のファイルが{bulk_status['incomplete']}件あります"
                     if bulk_status["incomplete"]
                     else "バルク取得後に調整済み日足へ同期します"
                 )
@@ -164,23 +171,21 @@ def _plan_capabilities() -> list[dict[str, object]]:
             "key": "topix",
             "label": "TOPIX対比",
             "status": (
-                "plan_unavailable"
-                if not paid_plan
-                else "ready" if topix_synced else "pending_sync"
+                "plan_unavailable" if not paid_plan else "ready" if topix_synced else "pending_sync"
             ),
             "message": (
                 "Light以上が必要です"
                 if not paid_plan
-                else "同期済み" if topix_synced else "次回の日次バッチで同期します"
+                else "同期済み"
+                if topix_synced
+                else "次回の日次バッチで同期します"
             ),
         },
         {
             "key": "earnings",
             "label": "決算予定日",
             "status": "ready" if earnings_synced else "pending_sync",
-            "message": (
-                "同期済み" if earnings_synced else "次回の日次バッチで同期します"
-            ),
+            "message": ("同期済み" if earnings_synced else "次回の日次バッチで同期します"),
         },
         {
             "key": "sector_index",
@@ -243,8 +248,15 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
             "breakout_close": lifecycle.breakout_close,
             "target_price": lifecycle.target_price,
             "invalidation_price": lifecycle.invalidation_price,
+            "breakout_distance_atr": lifecycle.breakout_distance_atr,
+            "target_progress_percent": lifecycle.target_progress_percent,
+            "remaining_risk_reward_ratio": lifecycle.remaining_risk_reward_ratio,
             "post_breakout_return_percent": lifecycle.post_breakout_return_percent,
             "recent_momentum_atr": lifecycle.recent_momentum_atr,
+            "execution_stop_price": lifecycle.execution_stop_price,
+            "execution_risk_reward_ratio": lifecycle.execution_risk_reward_ratio,
+            "three_day_momentum_atr": lifecycle.three_day_momentum_atr,
+            "distance_from_sma5_atr": lifecycle.distance_from_sma5_atr,
             "summary": lifecycle.summary,
         }
 
@@ -293,7 +305,9 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
         "status": result.status,
         "message": result.message,
         "score_is_probability": False,
-        "transition_readiness": None if transition is None else {
+        "transition_readiness": None
+        if transition is None
+        else {
             "phase": transition.phase.value,
             "phase_label": TRANSITION_PHASE_LABELS[transition.phase.value],
             "satisfied_conditions": transition.satisfied_conditions,
@@ -305,9 +319,7 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
                 if transition.next_condition is None
                 else serialize_condition(transition.next_condition)
             ),
-            "conditions": [
-                serialize_condition(condition) for condition in transition.conditions
-            ],
+            "conditions": [serialize_condition(condition) for condition in transition.conditions],
             "current_price": transition.current_price,
             "trigger_price": transition.trigger_price,
             "invalidation_price": transition.invalidation_price,
@@ -315,7 +327,9 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
             "risk_reward_ratio": transition.risk_reward_ratio,
             "score_is_probability": False,
         },
-        "position_entry": None if position_entry is None else {
+        "position_entry": None
+        if position_entry is None
+        else {
             "phase": position_entry.phase.value,
             "phase_label": POSITION_ENTRY_PHASE_LABELS[position_entry.phase.value],
             "satisfied_conditions": position_entry.satisfied_conditions,
@@ -352,12 +366,17 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
                     "touched": support.touched,
                     "held": support.held,
                     "description": support.description,
+                    "touch_age_days": support.touch_age_days,
                 }
                 for support in position_entry.supports
             ],
             "current_price": position_entry.current_price,
             "atr": position_entry.atr,
             "invalidation_price": position_entry.invalidation_price,
+            "target_price": position_entry.target_price,
+            "risk_reward_ratio": position_entry.risk_reward_ratio,
+            "volume_ratio": position_entry.volume_ratio,
+            "support_touch_age_days": position_entry.support_touch_age_days,
             "score_is_probability": False,
         },
         "patterns": [
@@ -390,12 +409,21 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
             }
             for check in result.equity_checks
         ],
-        "investment_decision": None if decision is None else {
+        "investment_decision": None
+        if decision is None
+        else {
             "action": decision.action.value,
             "evidence_score": decision.evidence_score,
             "summary": decision.summary,
             "reasons": list(decision.reasons),
             "cautions": list(decision.cautions),
+            "entry_stage": decision.entry_stage.value,
+            "entry_stage_label": ENTRY_STAGE_LABELS[decision.entry_stage.value],
+            "setup_score": decision.setup_score,
+            "entry_score": decision.entry_score,
+            "execution_stop_price": decision.execution_stop_price,
+            "expected_target_price": decision.expected_target_price,
+            "execution_risk_reward_ratio": decision.execution_risk_reward_ratio,
             "score_is_probability": False,
         },
     }
@@ -426,6 +454,21 @@ def watchlist() -> dict[str, object]:
                 "display_name": item.display_name,
                 "exchange": item.exchange,
                 "currency": item.currency,
+                "market": item.market,
+                "instrument_type": item.instrument_type,
+                "sector_17_code": item.sector_17_code,
+                "sector_17_name": item.sector_17_name,
+                "sector_33_code": item.sector_33_code,
+                "sector_33_name": item.sector_33_name,
+                "next_earnings_date": item.next_earnings_date,
+                "days_to_earnings": item.days_to_earnings,
+                "liquidity_rank": item.liquidity_rank,
+                "median_turnover": str(item.median_turnover)
+                if item.median_turnover is not None
+                else None,
+                "latest_trade_date": item.latest_trade_date,
+                "data_age_days": item.data_age_days,
+                "freshness_status": item.freshness_status,
             }
             for item in items
         ],
@@ -478,6 +521,10 @@ def instruments_search(
                 "display_name": item.display_name,
                 "market": item.market,
                 "sector": item.sector_33_name,
+                "sector_17_code": item.sector_17_code,
+                "sector_17_name": item.sector_17_name,
+                "sector_33_code": item.sector_33_code,
+                "sector_33_name": item.sector_33_name,
                 "instrument_type": item.instrument_type,
             }
             for item in items
@@ -560,6 +607,20 @@ def portfolio_positions() -> dict[str, object]:
                 "memo": item.memo,
                 "latest_close": str(item.latest_close) if item.latest_close is not None else None,
                 "latest_trade_date": item.latest_trade_date,
+                "market": item.market,
+                "instrument_type": item.instrument_type,
+                "sector_17_code": item.sector_17_code,
+                "sector_17_name": item.sector_17_name,
+                "sector_33_code": item.sector_33_code,
+                "sector_33_name": item.sector_33_name,
+                "next_earnings_date": item.next_earnings_date,
+                "days_to_earnings": item.days_to_earnings,
+                "liquidity_rank": item.liquidity_rank,
+                "median_turnover": str(item.median_turnover)
+                if item.median_turnover is not None
+                else None,
+                "data_age_days": item.data_age_days,
+                "freshness_status": item.freshness_status,
             }
             for item in items
         ]
@@ -581,10 +642,7 @@ async def create_or_update_position(request: Request) -> JSONResponse:
     if (
         not quantity.is_finite()
         or quantity < 0
-        or (
-            average_cost is not None
-            and (not average_cost.is_finite() or average_cost < 0)
-        )
+        or (average_cost is not None and (not average_cost.is_finite() or average_cost < 0))
     ):
         raise HTTPException(
             status_code=422,
@@ -652,6 +710,13 @@ def data_plan() -> dict[str, object]:
     }
 
 
+@app.get("/api/v1/market-environment/latest")
+def latest_market_environment() -> dict[str, object]:
+    """直近の寄り付き前市場環境を、データ不足も含めて明示する。"""
+    snapshot = load_latest_market_regime_snapshot(settings.database_url)
+    return market_regime_as_dict(snapshot)
+
+
 @app.get("/api/v1/watchlist/registrations")
 def watchlist_registrations() -> dict[str, object]:
     registrations = list_watchlist_registrations(
@@ -679,13 +744,9 @@ async def create_watchlist_registration(request: Request) -> JSONResponse:
     try:
         payload = await request.json()
     except ValueError as error:
-        raise HTTPException(
-            status_code=422, detail="JSON形式で指定してください"
-        ) from error
+        raise HTTPException(status_code=422, detail="JSON形式で指定してください") from error
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=422, detail="JSONオブジェクトで指定してください"
-        )
+        raise HTTPException(status_code=422, detail="JSONオブジェクトで指定してください")
     symbol = str(payload.get("symbol", "")).strip()
     symbol = symbol.upper()
     if not re.fullmatch(r"[0-9A-Z]{4}", symbol):
@@ -693,9 +754,7 @@ async def create_watchlist_registration(request: Request) -> JSONResponse:
             status_code=422,
             detail="証券コードは4文字の半角英数字で指定してください",
         )
-    registration = request_watchlist_registration(
-        settings.database_url, symbol, provider="jquants"
-    )
+    registration = request_watchlist_registration(settings.database_url, symbol, provider="jquants")
     is_active = registration.status == "active"
     return JSONResponse(
         status_code=200 if is_active else 202,
@@ -706,10 +765,7 @@ async def create_watchlist_registration(request: Request) -> JSONResponse:
             "message": (
                 "すでにウォッチリストへ登録されています"
                 if is_active
-                else (
-                    "登録を受け付けました。次回の日次バッチで"
-                    "銘柄確認と日足取得を行います"
-                )
+                else ("登録を受け付けました。次回の日次バッチで銘柄確認と日足取得を行います")
             ),
         },
     )
@@ -735,8 +791,7 @@ def daily_bars(
             include_unadjusted=True,
         )
         if stored_bars and any(
-            bar.provider == "jquants" and not bar.is_adjusted
-            for bar in stored_bars
+            bar.provider == "jquants" and not bar.is_adjusted for bar in stored_bars
         ):
             raise HTTPException(
                 status_code=409,
@@ -779,18 +834,14 @@ def daily_bars(
     bars = [bar for bar in all_bars if from_date <= bar.trade_date <= to_date]
     source_bar = bars[-1] if bars else all_bars[-1]
     calculation_bars = [bar for bar in all_bars if bar.trade_date <= to_date]
-    calculation_index = {
-        bar.trade_date: index for index, bar in enumerate(calculation_bars)
-    }
+    calculation_index = {bar.trade_date: index for index, bar in enumerate(calculation_bars)}
 
     def visible_values(values: tuple[float | None, ...]) -> list[float | None]:
         visible = [values[calculation_index[bar.trade_date]] for bar in bars]
         return [round(value, 4) if value is not None else None for value in visible]
 
     moving_averages = {
-        str(window): visible_values(
-            simple_moving_average_series(calculation_bars, window)
-        )
+        str(window): visible_values(simple_moving_average_series(calculation_bars, window))
         for window in (5, 20, 60)
     }
     rsi_values = {
@@ -812,9 +863,7 @@ def daily_bars(
             for band in resistance_bands(calculation_bars, lookback=lookback)
         ]
 
-    is_adjusted = all(
-        bar.is_adjusted or bar.symbol == "TOPIX" for bar in all_bars
-    )
+    is_adjusted = all(bar.is_adjusted or bar.symbol == "TOPIX" for bar in all_bars)
     return {
         "instrument": {"symbol": source_bar.symbol},
         "range": {"from": from_date.isoformat(), "to": to_date.isoformat()},
@@ -838,8 +887,7 @@ def daily_bars(
                 "moving_average": "終値の単純移動平均",
                 "rsi": "Wilder平滑化RSI",
                 "resistance": (
-                    "局所高値をATRで集約した2回以上接触の候補帯。"
-                    "明確に上抜けた帯は除外"
+                    "局所高値をATRで集約した2回以上接触の候補帯。明確に上抜けた帯は除外"
                 ),
                 "score_is_probability": False,
             },
@@ -873,26 +921,25 @@ def candidates(
         analyses = [item for item in analyses if item[1].direction.value == direction]
     if action:
         analyses = [
-            item for item in analyses
-            if item[1].investment_decision
-            and item[1].investment_decision.action.value == action
+            item
+            for item in analyses
+            if item[1].investment_decision and item[1].investment_decision.action.value == action
         ]
     analyses = [
-        item for item in analyses
+        item
+        for item in analyses
         if (
             item[1].investment_decision.evidence_score
             if item[1].investment_decision
             else item[1].winning_score
-        ) >= minimum_score
+        )
+        >= minimum_score
     ]
     return {
         "horizon_days": horizon,
         "status": "ready" if analyses else "no_candidates",
         "method": "rule_based",
-        "notice": (
-            "判定スコアと根拠の強さは参考値であり、"
-            "将来の確率ではありません"
-        ),
+        "notice": ("判定スコアと根拠の強さは参考値であり、将来の確率ではありません"),
         "items": [_serialize_analysis(result, name) for name, result in analyses],
     }
 
@@ -927,10 +974,7 @@ def ai_investment_review_capability() -> dict[str, object]:
             if configured
             else "OPENAI_API_KEYを設定すると利用できます"
         ),
-        "notice": (
-            "実行ごとにOpenAI APIとWeb検索の利用料金が"
-            "発生する場合があります"
-        ),
+        "notice": ("実行ごとにOpenAI APIとWeb検索の利用料金が発生する場合があります"),
     }
 
 
@@ -982,6 +1026,12 @@ def create_ai_investment_review(
             "engine",
         )
     }
+    technical_context["market_environment"] = market_regime_as_dict(
+        load_latest_market_regime_snapshot(
+            settings.database_url,
+            on_or_before=date.fromisoformat(result.as_of_date),
+        )
+    )
     try:
         service = OpenAIInvestmentReviewService(
             settings.openai_api_key,
@@ -991,10 +1041,7 @@ def create_ai_investment_review(
     except Exception as error:
         raise HTTPException(
             status_code=503,
-            detail=(
-                "OpenAI SDKを初期化できません。"
-                "Dockerイメージを再ビルドしてください"
-            ),
+            detail=("OpenAI SDKを初期化できません。Dockerイメージを再ビルドしてください"),
         ) from error
     if not ai_review_lock.acquire(blocking=False):
         raise HTTPException(
@@ -1037,10 +1084,7 @@ def create_ai_investment_review(
             }
             for citation in review.citations
         ],
-        "notice": (
-            "AIによる補助分析であり、投資助言、利益保証、"
-            "自動注文ではありません"
-        ),
+        "notice": ("AIによる補助分析であり、投資助言、利益保証、自動注文ではありません"),
     }
 
 

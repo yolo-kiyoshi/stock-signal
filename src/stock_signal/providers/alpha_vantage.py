@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from stock_signal.domain.market_data import DailyBar, SymbolMatch
+from stock_signal.domain.market_environment import MarketObservation
 from stock_signal.providers.base import (
     MarketDataAuthenticationError,
     MarketDataProvider,
@@ -29,6 +30,7 @@ class AlphaVantageProvider(MarketDataProvider):
         max_retries: int = 2,
         http_client: JsonHttpClient | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        minimum_request_interval: float = 0.0,
     ) -> None:
         self._api_key = api_key.strip() if api_key else None
         self._base_url = base_url
@@ -36,6 +38,107 @@ class AlphaVantageProvider(MarketDataProvider):
         self._max_retries = max_retries
         self._http_client = http_client or UrllibJsonHttpClient()
         self._sleep = sleep
+        self._minimum_request_interval = minimum_request_interval
+
+    def fetch_market_environment(self) -> list[MarketObservation]:
+        """米国市場終了後に、寄り付き前判定用の5指標を取得する。"""
+        requests = (
+            ("spy", "S&P 500 ETF", "USD", "TIME_SERIES_DAILY", "SPY"),
+            ("qqq", "NASDAQ 100 ETF", "USD", "TIME_SERIES_DAILY", "QQQ"),
+            ("wti", "WTI原油", "USD/barrel", "WTI", None),
+            ("us10y", "米10年債利回り", "%", "TREASURY_YIELD", None),
+            ("usdjpy", "ドル円", "JPY", "FX_DAILY", None),
+        )
+        observations = []
+        for index, (key, label, unit, function, symbol) in enumerate(requests):
+            try:
+                values = self._fetch_environment_values(function, symbol)
+            except (
+                MarketDataRateLimitError,
+                MarketDataResponseError,
+                MarketDataTransportError,
+            ):
+                values = []
+            if len(values) >= 2:
+                observations.append(
+                    MarketObservation(
+                        indicator_key=key,
+                        label=label,
+                        observation_date=values[-1][0],
+                        value=values[-1][1],
+                        previous_value=values[-2][1],
+                        unit=unit,
+                        source="Alpha Vantage",
+                    )
+                )
+            if index < len(requests) - 1 and self._minimum_request_interval > 0:
+                self._sleep(self._minimum_request_interval)
+        if not observations:
+            raise MarketDataResponseError("寄り付き前の外部指標を取得できませんでした")
+        return observations
+
+    def _fetch_environment_values(
+        self,
+        function: str,
+        symbol: str | None,
+    ) -> list[tuple[date, float]]:
+        """一つの外部指標を日付と値へ正規化する。"""
+        if function == "TIME_SERIES_DAILY":
+            payload = self._request(
+                {
+                    "function": function,
+                    "symbol": str(symbol),
+                    "outputsize": "compact",
+                    "datatype": "json",
+                }
+            )
+            return self._dated_values(payload, "Time Series (Daily)", "4. close")
+        if function == "FX_DAILY":
+            payload = self._request(
+                {
+                    "function": function,
+                    "from_symbol": "USD",
+                    "to_symbol": "JPY",
+                    "outputsize": "compact",
+                    "datatype": "json",
+                }
+            )
+            return self._dated_values(payload, "Time Series FX (Daily)", "4. close")
+        parameters = {"function": function, "interval": "daily"}
+        if function == "TREASURY_YIELD":
+            parameters["maturity"] = "10year"
+        return self._macro_values(self._request(parameters))
+
+    @staticmethod
+    def _dated_values(
+        payload: Mapping[str, Any], series_key: str, value_key: str
+    ) -> list[tuple[date, float]]:
+        raw_series = payload.get(series_key)
+        if not isinstance(raw_series, Mapping):
+            raise MarketDataResponseError(f"Alpha Vantage response did not contain {series_key}")
+        try:
+            return sorted(
+                (date.fromisoformat(str(raw_date)), float(raw_value[value_key]))
+                for raw_date, raw_value in raw_series.items()
+                if isinstance(raw_value, Mapping)
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise MarketDataResponseError(f"{series_key}に不正な値があります") from error
+
+    @staticmethod
+    def _macro_values(payload: Mapping[str, Any]) -> list[tuple[date, float]]:
+        raw_data = payload.get("data")
+        if not isinstance(raw_data, list):
+            raise MarketDataResponseError("Alpha Vantage response did not contain macro data")
+        values = []
+        try:
+            for row in raw_data:
+                if not isinstance(row, Mapping) or str(row.get("value", ".")) == ".":
+                    continue
+                values.append((date.fromisoformat(str(row["date"])), float(row["value"])))
+        except (KeyError, TypeError, ValueError) as error:
+            raise MarketDataResponseError("マクロ指標に不正な値があります") from error
+        return sorted(values)
 
     def fetch_daily_prices(
         self,

@@ -285,3 +285,46 @@ bulk_files = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 Index("idx_bulk_files_endpoint_date", bulk_files.c.endpoint, bulk_files.c.target_date)
+
+market_observations = Table(
+    "market_observations",
+    metadata,
+    Column("indicator_key", String(40), primary_key=True),
+    Column("observation_date", Date, primary_key=True),
+    Column("provider", String(40), primary_key=True),
+    Column("label", String(100), nullable=False),
+    Column("value", Numeric(24, 8), nullable=False),
+    Column("previous_value", Numeric(24, 8)),
+    Column("unit", String(30), nullable=False),
+    Column("available_at", DateTime(timezone=True), nullable=False),
+    Column("retrieved_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+Index(
+    "idx_market_observations_latest",
+    market_observations.c.indicator_key,
+    market_observations.c.observation_date.desc(),
+)
+
+market_regime_snapshots = Table(
+    "market_regime_snapshots",
+    metadata,
+    Column("decision_date", Date, primary_key=True),
+    Column("decision_at", DateTime(timezone=True), nullable=False),
+    Column("regime", String(20), nullable=False),
+    Column("risk_score", Float, nullable=False),
+    Column("coverage_ratio", Float, nullable=False),
+    Column("components_json", JSONB, nullable=False),
+    Column("reasons_json", JSONB, nullable=False),
+    Column("cautions_json", JSONB, nullable=False),
+    Column("observations_json", JSONB, nullable=False),
+    Column("engine_version", String(100), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(
+        "regime IN ('normal', 'caution', 'severe', 'unavailable')",
+        name="ck_market_regime_snapshots_regime",
+    ),
+)
+Index(
+    "idx_market_regime_snapshots_latest",
+    market_regime_snapshots.c.decision_date.desc(),
+)

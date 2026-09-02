@@ -2,6 +2,19 @@ export type InstrumentListItem = {
   symbol: string;
   provider: string;
   display_name: string;
+  market?: string | null;
+  instrument_type?: string | null;
+  sector_17_code?: string | null;
+  sector_17_name?: string | null;
+  sector_33_code?: string | null;
+  sector_33_name?: string | null;
+  next_earnings_date?: string | null;
+  days_to_earnings?: number | null;
+  liquidity_rank?: "very_high" | "high" | "medium" | "low" | "unknown";
+  median_turnover?: string | null;
+  latest_trade_date?: string | null;
+  data_age_days?: number | null;
+  freshness_status?: "fresh" | "stale" | "missing";
 };
 
 export type PositionItem = InstrumentListItem & {
@@ -17,6 +30,9 @@ export type MarketCandidate = InstrumentListItem & {
   action: "buy_candidate" | "watch" | "avoid_new_buy";
   direction: "up" | "flat" | "down";
   evidence_score: number;
+  entry_stage?: "setup_confirmed" | "conditional_entry" | "entry_ready" | "wait_for_pullback" | "avoid";
+  entry_score?: number | null;
+  execution_risk_reward_ratio?: number | null;
   as_of_date: string;
   transition_phase?: string;
   transition_summary?: string | null;
@@ -36,6 +52,38 @@ export type DashboardData = {
   plan: string;
   capabilities: PlanCapability[];
   aiCapability: AiCapability;
+  marketEnvironment: MarketEnvironment;
+};
+
+export type MarketEnvironment = {
+  status: "ready" | "not_collected";
+  decision_date?: string;
+  decision_at?: string;
+  regime: "normal" | "caution" | "severe" | "unavailable";
+  regime_label: string;
+  risk_score?: number;
+  coverage_ratio?: number;
+  message: string;
+  reasons: string[];
+  cautions: string[];
+  components: Array<{
+    key: string;
+    label: string;
+    score: number;
+    level: string;
+    description: string;
+  }>;
+  observations: Array<{
+    key: string;
+    label: string;
+    observation_date: string;
+    value: number;
+    previous_value: number | null;
+    change_value: number | null;
+    change_percent: number | null;
+    unit: string;
+    source: string;
+  }>;
 };
 
 export type AiCapability = {
@@ -106,7 +154,18 @@ export type AnalysisPattern = {
   direction: "up" | "flat" | "down";
   fit_score: number;
   description: string;
-  lifecycle?: { status: string; status_label: string; summary: string } | null;
+  lifecycle?: {
+    status: string;
+    status_label: string;
+    summary: string;
+    breakout_distance_atr?: number | null;
+    target_progress_percent?: number;
+    remaining_risk_reward_ratio?: number | null;
+    execution_stop_price?: number | null;
+    execution_risk_reward_ratio?: number | null;
+    three_day_momentum_atr?: number | null;
+    distance_from_sma5_atr?: number | null;
+  } | null;
 };
 
 export type EquityCheck = {
@@ -141,6 +200,13 @@ export type AnalysisResponse = {
     summary: string;
     reasons: string[];
     cautions: string[];
+    entry_stage: "setup_confirmed" | "conditional_entry" | "entry_ready" | "wait_for_pullback" | "avoid" | "not_applicable";
+    entry_stage_label: string;
+    setup_score: number | null;
+    entry_score: number | null;
+    execution_stop_price: number | null;
+    expected_target_price: number | null;
+    execution_risk_reward_ratio: number | null;
   } | null;
   engine: { id: string; version: string };
 };

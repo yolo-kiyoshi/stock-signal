@@ -4,12 +4,13 @@ import type {
   DashboardData,
   InstrumentListItem,
   MarketCandidate,
+  MarketEnvironment,
   PlanCapability,
   PositionItem,
 } from "@/types/api";
 
 export async function loadDashboardData(): Promise<DashboardData> {
-  const [watchlist, positions, swing, position, dataPlan, aiCapability] = await Promise.all([
+  const [watchlist, positions, swing, position, dataPlan, aiCapability, marketEnvironment] = await Promise.all([
     backendJson<{ items: InstrumentListItem[] }>("/api/v1/watchlist"),
     backendJson<{ items: PositionItem[] }>("/api/v1/portfolio/positions"),
     backendJson<{ items: MarketCandidate[] }>(
@@ -22,6 +23,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
       "/api/v1/data-plan",
     ),
     backendJson<AiCapability>("/api/v1/ai-investment-review/capability"),
+    backendJson<MarketEnvironment>("/api/v1/market-environment/latest"),
   ]);
 
   return {
@@ -31,5 +33,6 @@ export async function loadDashboardData(): Promise<DashboardData> {
     plan: dataPlan.plan,
     capabilities: dataPlan.capabilities,
     aiCapability,
+    marketEnvironment,
   };
 }

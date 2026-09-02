@@ -57,6 +57,7 @@ class Settings:
     openai_max_output_tokens: int = 6_000
     api_auth_required: bool = False
     internal_api_token: str | None = None
+    market_environment_request_interval_seconds: float = 12.1
 
     @property
     def jquants_rate_limit_per_minute(self) -> int:
@@ -137,6 +138,18 @@ class Settings:
             raise ConfigurationError(
                 "productionではINTERNAL_API_TOKENのローカル初期値を使用できません"
             )
+        try:
+            market_environment_request_interval_seconds = float(
+                os.getenv("MARKET_ENVIRONMENT_REQUEST_INTERVAL_SECONDS", "12.1")
+            )
+        except ValueError as error:
+            raise ConfigurationError(
+                "MARKET_ENVIRONMENT_REQUEST_INTERVAL_SECONDS must be a number"
+            ) from error
+        if not 0 <= market_environment_request_interval_seconds <= 60:
+            raise ConfigurationError(
+                "MARKET_ENVIRONMENT_REQUEST_INTERVAL_SECONDS must be between 0 and 60"
+            )
 
         return cls(
             app_env=app_env,
@@ -156,6 +169,9 @@ class Settings:
             openai_max_output_tokens=openai_max_output_tokens,
             api_auth_required=api_auth_required,
             internal_api_token=internal_api_token,
+            market_environment_request_interval_seconds=(
+                market_environment_request_interval_seconds
+            ),
         )
 
     def safe_dict(self) -> dict[str, object]:

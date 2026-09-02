@@ -225,7 +225,7 @@ def test_daily_batch_fetches_only_after_latest_date_and_records_run(database_url
     assert result.items[0].analysis_summary["5"]["action"] in {
         "buy_candidate", "watch", "avoid_new_buy", "insufficient_data"
     }
-    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.7.0"
+    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.9.0"
 
 
 def test_failure_of_one_symbol_does_not_discard_other_symbol(database_url) -> None:
@@ -334,6 +334,8 @@ def test_light_batch_syncs_market_and_stores_screening(database_url) -> None:
     assert by_symbol["@SCREEN"].upserted == 1
     assert len(load_daily_bars(database_url, "7203", provider="jquants")) == 30
     candidates = list_market_candidates(database_url, limit=10)
+    assert candidates[0]["sector_33_code"] == "3700"
+    assert candidates[0]["sector_33_name"] == "輸送用機器"
     assert candidates[0]["transition_phase"] != "unknown"
     assert candidates[0]["transition_total"] >= 4
 

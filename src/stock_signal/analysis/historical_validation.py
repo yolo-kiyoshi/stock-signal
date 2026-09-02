@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Literal
 
@@ -10,7 +10,12 @@ from stock_signal.analysis.engine import RuleBasedAnalysisEngine
 from stock_signal.analysis.horizons import get_horizon_profile
 from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.database import load_daily_bars
-from stock_signal.domain.analysis import AnalysisContext, AnalysisResult, Direction
+from stock_signal.domain.analysis import (
+    AnalysisContext,
+    AnalysisResult,
+    Direction,
+    InvestmentAction,
+)
 from stock_signal.domain.market_data import DailyBar
 
 type ValidationStatus = Literal[
@@ -23,7 +28,7 @@ type ValidationStatus = Literal[
 
 @dataclass(frozen=True, slots=True)
 class RealizedOutcome:
-    """判定日から指定営業日後までに実現した値動き。"""
+    """翌営業日始値から指定営業日後までに実現した値動き。"""
 
     direction: Direction
     start_date: date
@@ -35,6 +40,12 @@ class RealizedOutcome:
     threshold_atr: float
     market_return_percent: float | None
     excess_return_percent: float | None
+    signal_date: date | None = None
+    maximum_favorable_excursion_percent: float | None = None
+    maximum_adverse_excursion_percent: float | None = None
+    target_hit: bool | None = None
+    stop_hit: bool | None = None
+    exit_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +62,8 @@ class HistoricalValidationResult:
     analysis: AnalysisResult | None = None
     actual: RealizedOutcome | None = None
     direction_matched: bool | None = None
+    event_started: bool = False
+    event_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +90,10 @@ def calculate_realized_outcome(
     target_bar: DailyBar,
     threshold_atr: float,
     *,
+    entry_bar: DailyBar | None = None,
+    path_bars: list[DailyBar] | None = None,
+    stop_price: float | None = None,
+    target_price: float | None = None,
     market_start: DailyBar | None = None,
     market_target: DailyBar | None = None,
 ) -> RealizedOutcome | None:
@@ -86,8 +103,9 @@ def calculate_realized_outcome(
     atr = wilder_atr(history, 20)
     if atr is None or atr <= 0:
         return None
-    start_bar = history[-1]
-    start_close = float(start_bar.close)
+    signal_bar = history[-1]
+    start_bar = entry_bar or signal_bar
+    start_close = float(start_bar.open if entry_bar is not None else start_bar.close)
     target_close = float(target_bar.close)
     return_percent = (target_close / start_close - 1) * 100
     move_atr = (target_close - start_close) / atr
@@ -98,6 +116,26 @@ def calculate_realized_outcome(
         market_start_close = float(market_start.close)
         market_return = (float(market_target.close) / market_start_close - 1) * 100
         excess_return = return_percent - market_return
+
+    evaluation_path = path_bars or [target_bar]
+    maximum_favorable = max(float(bar.high) for bar in evaluation_path)
+    maximum_adverse = min(float(bar.low) for bar in evaluation_path)
+    target_hit = None if target_price is None else False
+    stop_hit = None if stop_price is None else False
+    exit_reason = None
+    for bar in evaluation_path:
+        hit_target = target_price is not None and float(bar.high) >= target_price
+        hit_stop = stop_price is not None and float(bar.low) <= stop_price
+        if hit_target:
+            target_hit = True
+        if hit_stop:
+            stop_hit = True
+        if exit_reason is None and hit_target and hit_stop:
+            exit_reason = "same_day_stop_first"
+        elif exit_reason is None and hit_stop:
+            exit_reason = "stop"
+        elif exit_reason is None and hit_target:
+            exit_reason = "target"
 
     return RealizedOutcome(
         direction=classify_realized_direction(move_atr, threshold_atr),
@@ -110,6 +148,18 @@ def calculate_realized_outcome(
         threshold_atr=threshold_atr,
         market_return_percent=(None if market_return is None else round(market_return, 3)),
         excess_return_percent=(None if excess_return is None else round(excess_return, 3)),
+        signal_date=signal_bar.trade_date,
+        maximum_favorable_excursion_percent=round(
+            (maximum_favorable / start_close - 1) * 100,
+            3,
+        ),
+        maximum_adverse_excursion_percent=round(
+            (maximum_adverse / start_close - 1) * 100,
+            3,
+        ),
+        target_hit=target_hit,
+        stop_hit=stop_hit,
+        exit_reason=exit_reason,
     )
 
 
@@ -227,7 +277,47 @@ class HistoricalValidationService:
                 completed == 1 or completed % 25 == 0 or completed == total
             ):
                 on_progress(completed, total, requested_date)
-        return tuple(points)
+        return self._mark_trade_events(tuple(points), normalized_symbol, horizons)
+
+    @staticmethod
+    def _mark_trade_events(
+        points: tuple[HistoricalValidationPoint, ...],
+        symbol: str,
+        horizons: tuple[int, ...],
+    ) -> tuple[HistoricalValidationPoint, ...]:
+        """連続する購入候補を、最初の判定日を起点とする一取引へまとめる。"""
+        active = {horizon: False for horizon in horizons}
+        marked: list[HistoricalValidationPoint] = []
+        for point in points:
+            results = []
+            for result in point.results:
+                decision = (
+                    result.analysis.investment_decision
+                    if result.analysis is not None
+                    else None
+                )
+                actionable = (
+                    result.status == "ready"
+                    and decision is not None
+                    and decision.action is InvestmentAction.BUY_CANDIDATE
+                )
+                started = actionable and not active[result.horizon_days]
+                active[result.horizon_days] = actionable
+                results.append(
+                    replace(
+                        result,
+                        event_started=started,
+                        event_id=(
+                            f"{symbol}-{result.horizon_days}-{point.as_of_date.isoformat()}"
+                            if started
+                            else None
+                        ),
+                    )
+                )
+            marked.append(
+                HistoricalValidationPoint(point.as_of_date, tuple(results))
+            )
+        return tuple(marked)
 
     def _validate_loaded(
         self,
@@ -295,6 +385,7 @@ class HistoricalValidationService:
                 analysis=analysis,
             )
 
+        entry_index = as_of_index + 1
         target_index = as_of_index + horizon_days
         if target_index >= len(bars):
             available_future_days = len(bars) - as_of_index - 1
@@ -313,12 +404,25 @@ class HistoricalValidationService:
             )
 
         target_bar = bars[target_index]
+        entry_bar = bars[entry_index]
         market_by_date = {bar.trade_date: bar for bar in market_bars}
         actual = calculate_realized_outcome(
             history,
             target_bar,
             profile.recent_atr_threshold,
-            market_start=market_by_date.get(effective_as_of),
+            entry_bar=entry_bar,
+            path_bars=bars[entry_index:target_index + 1],
+            stop_price=(
+                analysis.investment_decision.execution_stop_price
+                if analysis.investment_decision is not None
+                else None
+            ),
+            target_price=(
+                analysis.investment_decision.expected_target_price
+                if analysis.investment_decision is not None
+                else None
+            ),
+            market_start=market_by_date.get(entry_bar.trade_date),
             market_target=market_by_date.get(target_bar.trade_date),
         )
         if actual is None:

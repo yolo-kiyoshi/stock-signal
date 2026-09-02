@@ -289,6 +289,8 @@ class DailyBatchRunner:
                 "direction": analysis.direction.value,
                 "action": decision.action.value if decision else None,
                 "evidence_score": decision.evidence_score if decision else None,
+                "entry_stage": decision.entry_stage.value if decision else None,
+                "entry_score": decision.entry_score if decision else None,
                 "patterns": [pattern.pattern_type.value for pattern in analysis.patterns],
                 "engine_version": analysis.engine_version,
                 "transition_phase": transition.phase.value if transition else None,
@@ -333,34 +335,41 @@ class DailyBatchRunner:
                         action=decision.action.value,
                         evidence_score=decision.evidence_score,
                         analysis_json={
-                        "summary": decision.summary,
-                        "reasons": list(decision.reasons),
-                        "engine_id": result.engine_id,
-                        "engine_version": result.engine_version,
-                        "transition_readiness": (
-                            None
-                            if transition is None
-                            else {
-                                "phase": transition.phase.value,
-                                "satisfied_conditions": transition.satisfied_conditions,
-                                "total_conditions": transition.total_conditions,
-                                "readiness_score": transition.readiness_score,
-                                "summary": transition.summary,
-                                "next_condition": (
-                                    None
-                                    if transition.next_condition is None
-                                    else {
-                                        "label": transition.next_condition.label,
-                                        "description": transition.next_condition.description,
-                                    }
-                                ),
-                                "current_price": transition.current_price,
-                                "trigger_price": transition.trigger_price,
-                                "invalidation_price": transition.invalidation_price,
-                                "target_price": transition.target_price,
-                                "risk_reward_ratio": transition.risk_reward_ratio,
-                            }
-                        ),
+                            "summary": decision.summary,
+                            "reasons": list(decision.reasons),
+                            "entry_stage": decision.entry_stage.value,
+                            "entry_score": decision.entry_score,
+                            "execution_stop_price": decision.execution_stop_price,
+                            "expected_target_price": decision.expected_target_price,
+                            "execution_risk_reward_ratio": (
+                                decision.execution_risk_reward_ratio
+                            ),
+                            "engine_id": result.engine_id,
+                            "engine_version": result.engine_version,
+                            "transition_readiness": (
+                                None
+                                if transition is None
+                                else {
+                                    "phase": transition.phase.value,
+                                    "satisfied_conditions": transition.satisfied_conditions,
+                                    "total_conditions": transition.total_conditions,
+                                    "readiness_score": transition.readiness_score,
+                                    "summary": transition.summary,
+                                    "next_condition": (
+                                        None
+                                        if transition.next_condition is None
+                                        else {
+                                            "label": transition.next_condition.label,
+                                            "description": transition.next_condition.description,
+                                        }
+                                    ),
+                                    "current_price": transition.current_price,
+                                    "trigger_price": transition.trigger_price,
+                                    "invalidation_price": transition.invalidation_price,
+                                    "target_price": transition.target_price,
+                                    "risk_reward_ratio": transition.risk_reward_ratio,
+                                }
+                            ),
                         },
                     )
                     stored += 1

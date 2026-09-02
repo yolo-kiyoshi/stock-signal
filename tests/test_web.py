@@ -7,10 +7,11 @@ from fastapi.testclient import TestClient
 import stock_signal.web.app as web_app_module
 from stock_signal.ai_review import InvestmentReview, ReviewCitation
 from stock_signal.database import (
+    replace_earnings_calendar,
     replace_instruments,
     upsert_daily_bars,
 )
-from stock_signal.domain.market_data import DailyBar
+from stock_signal.domain.market_data import DailyBar, EarningsAnnouncement
 from stock_signal.web.app import app
 
 
@@ -233,12 +234,17 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
     assert payload["investment_decision"]["action"] in {
         "buy_candidate", "watch", "avoid_new_buy"
     }
+    assert payload["investment_decision"]["entry_stage"] in {
+        "setup_confirmed", "conditional_entry", "entry_ready",
+        "wait_for_pullback", "avoid", "not_applicable",
+    }
+    assert "execution_risk_reward_ratio" in payload["investment_decision"]
     transition = payload["transition_readiness"]
     assert transition["score_is_probability"] is False
     assert 0 <= transition["satisfied_conditions"] <= transition["total_conditions"]
     assert transition["phase"] in {
         "falling", "bottoming", "preparing", "one_gate_remaining",
-        "early_reversal", "uptrend", "caution",
+        "early_reversal", "breakout_confirmed", "uptrend", "caution",
     }
     assert len(transition["conditions"]) >= 4
     assert isinstance(payload["patterns"], list)
@@ -246,12 +252,19 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
     if payload["patterns"]:
         lifecycle = payload["patterns"][0]["lifecycle"]
         assert lifecycle["status"] in {
-            "entry_window", "monitoring", "weakening", "target_reached", "failed", "expired"
+            "entry_window", "overextended", "monitoring", "weakening",
+            "target_reached", "failed", "expired"
         }
         assert lifecycle["maximum_monitoring_days"] == 20
+        assert "breakout_distance_atr" in lifecycle
+        assert "target_progress_percent" in lifecycle
+        assert "remaining_risk_reward_ratio" in lifecycle
+        assert "execution_stop_price" in lifecycle
+        assert "execution_risk_reward_ratio" in lifecycle
     assert {check["key"] for check in payload["equity_checks"]} >= {
         "data_freshness", "volume_ratio", "gap_atr", "liquidity_score", "market_trend_score",
-        "relative_strength", "beta_topix", "sector_trend_score", "days_to_earnings",
+        "relative_strength", "relative_strength_short", "beta_topix",
+        "sector_trend_score", "days_to_earnings",
         "disclosure_event",
     }
 
@@ -344,6 +357,11 @@ def test_bulk_watchlist_registration_uses_synced_master(database_url) -> None:
             for index in range(25)
         ],
     )
+    next_earnings = date.today() + timedelta(days=5)
+    replace_earnings_calendar(
+        database_url,
+        [EarningsAnnouncement("7203", next_earnings, "トヨタ自動車")],
+    )
 
     with TestClient(app) as client:
         response = client.post(
@@ -359,6 +377,15 @@ def test_bulk_watchlist_registration_uses_synced_master(database_url) -> None:
     assert response.json()["added"] == ["7203"]
     assert response.json()["pending"] == ["186A"]
     assert [item["symbol"] for item in watchlist] == ["7203"]
+    assert watchlist[0]["sector_33_code"] == "3650"
+    assert watchlist[0]["sector_33_name"] == "電気機器"
+    assert watchlist[0]["market"] == "プライム"
+    assert watchlist[0]["instrument_type"] == "stock"
+    assert watchlist[0]["sector_17_name"] == "電機・精密"
+    assert watchlist[0]["days_to_earnings"] == 5
+    assert watchlist[0]["next_earnings_date"] == next_earnings.isoformat()
+    assert watchlist[0]["liquidity_rank"] == "very_high"
+    assert watchlist[0]["freshness_status"] in {"fresh", "stale"}
     assert analysis["status"] == "ready"
 
 
@@ -379,4 +406,10 @@ def test_position_can_be_saved_without_adding_watchlist(database_url) -> None:
 
     assert response.status_code == 200
     assert positions[0]["symbol"] == "6758"
+    assert positions[0]["sector_33_code"] == "3650"
+    assert positions[0]["sector_33_name"] == "電気機器"
+    assert positions[0]["market"] == "プライム"
+    assert positions[0]["sector_17_name"] == "電機・精密"
+    assert positions[0]["liquidity_rank"] == "unknown"
+    assert positions[0]["freshness_status"] == "missing"
     assert watchlist == []

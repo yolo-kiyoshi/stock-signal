@@ -62,6 +62,15 @@ def _render_summary(
         for direction in Direction
     }
     rate_text = "—" if match_rate is None else f"{match_rate:.1f}%"
+    events = [result for result in results if result.event_started]
+    target_hits = sum(result.actual.target_hit is True for result in events)
+    stop_hits = sum(result.actual.stop_hit is True for result in events)
+    average_return = (
+        sum(result.actual.return_percent for result in events) / len(events)
+        if events
+        else None
+    )
+    average_return_text = "—" if average_return is None else f"{average_return:+.2f}%"
     label = _HORIZON_LABELS[horizon]
     return f"""
       <article class="summary-card horizon-{horizon}">
@@ -70,6 +79,9 @@ def _render_summary(
           <div><dt>検証件数</dt><dd>{len(results)}件</dd></div>
           <div><dt>方向一致</dt><dd>{matches}件</dd></div>
           <div><dt>方向一致率</dt><dd>{rate_text}</dd></div>
+          <div><dt>購入イベント</dt><dd>{len(events)}件</dd></div>
+          <div><dt>目標／損切り到達</dt><dd>{target_hits}／{stop_hits}件</dd></div>
+          <div><dt>イベント平均騰落</dt><dd>{average_return_text}</dd></div>
         </dl>
         <p>実績内訳：上昇 {actual_counts[Direction.UP]}・停滞
           {actual_counts[Direction.FLAT]}・下落 {actual_counts[Direction.DOWN]}</p>
@@ -98,14 +110,22 @@ def _render_result_cells(point: HistoricalValidationPoint, horizon: int) -> str:
     actual = result.actual
     match_class = "matched" if result.direction_matched else "not-matched"
     match_label = "一致" if result.direction_matched else "不一致"
+    event_label = "<b>新規イベント</b>" if result.event_started else ""
+    path_metrics = (
+        f"MFE {actual.maximum_favorable_excursion_percent:+.2f}% / "
+        f"MAE {actual.maximum_adverse_excursion_percent:+.2f}%"
+        if actual.maximum_favorable_excursion_percent is not None
+        and actual.maximum_adverse_excursion_percent is not None
+        else f"{actual.move_atr:+.2f} ATR"
+    )
     return f"""
       <td><span class="direction {predicted.value}">{_DIRECTION_LABELS[predicted]}</span>
-        <small>{html.escape(action)}</small></td>
+        <small>{html.escape(action)} {event_label}</small></td>
       <td><span class="direction {actual.direction.value}">
         {_DIRECTION_LABELS[actual.direction]}</span>
         <small>{actual.target_date.isoformat()}</small></td>
       <td><span class="match {match_class}">{match_label}</span></td>
-      <td class="number">{actual.return_percent:+.2f}%<small>{actual.move_atr:+.2f} ATR</small></td>
+      <td class="number">{actual.return_percent:+.2f}%<small>{path_metrics}</small></td>
     """
 
 
@@ -201,6 +221,7 @@ def render_historical_fit_report(
     thead tr:first-child th {{ text-align:center; color:var(--text); font-size:11px; }}
     tbody th {{ white-space:nowrap; }}
     td small,.number small {{ display:block; margin-top:3px; font-size:9px; }}
+    td small b {{ color:var(--accent); margin-left:4px; }}
     .direction,.match {{ display:inline-block; padding:4px 7px; border-radius:999px;
       font-weight:700; }}
     .direction.up {{ background:#e7f4ed; color:var(--up); }}
@@ -233,10 +254,13 @@ def render_historical_fit_report(
   <section class="method">
     <h2>読み方</h2>
     <p>現在のエンジン版を各判定日へ遡及適用し、その日以前の日足だけでテクニカル方向を
-      再計算しています。スイングは5営業日後、中長期は20営業日後の終値と比較します。
+      再計算しています。約定価格は判定の翌営業日始値とし、スイングは5営業日後、
+      中長期は20営業日後の終値と比較します。連続する購入候補は初日を一つの購入イベントとして集計します。
       実績方向は判定日時点のWilder ATRを使い、
       スイングは±0.5 ATR、中長期は±1.0 ATR以上を上昇・下落、その内側を停滞とします。
-      一致率は方向3分類の当てはまりであり、売買戦略の勝率、利益率、将来確率ではありません。</p>
+      MFEは期間中の最大上昇、MAEは最大逆行です。同一日に目標と損切りの双方へ触れた場合は、
+      保守的に損切りが先と扱います。一致率は方向3分類の当てはまりであり、
+      売買戦略の勝率、利益率、将来確率ではありません。</p>
   </section>
   <section class="table-panel">
     <h2>判定日別の結果</h2>
@@ -254,7 +278,7 @@ def render_historical_fit_report(
     </div>
   </section>
   <footer>本レポートは保存済みデータによる分析情報であり、投資助言や利益保証ではありません。
-    過去時点の決算予定履歴、手数料、税金、スリッページ、途中の最大逆行幅は含みません。
+    過去時点の決算予定履歴、手数料、税金、スリッページは含みません。
     株価は現在DBに保存されている最新の遡及調整済み系列を使用します。</footer>
 </main>
 </body>

@@ -50,7 +50,7 @@ def test_initialize_database(database_url) -> None:
         version = connection.scalar(
             select(app_metadata.c.value).where(app_metadata.c.key == "schema_version")
         )
-    assert version == "7"
+    assert version == "8"
 
 
 def test_sqlite_path() -> None:

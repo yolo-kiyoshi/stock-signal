@@ -178,7 +178,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   padding: 5px 8px;
 }
 .candidate-filters button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: white; }
-.sidebar-search { border-top: 1px solid var(--line); display: block; flex: 0 0 auto; padding: 9px 12px; }
+.sidebar-search-tools { border-top: 1px solid var(--line); flex: 0 0 auto; padding: 9px 12px 7px; }
+.sidebar-search { display: block; }
 .sidebar-search span { left: -9999px; position: absolute; }
 .sidebar-search input {
   background: var(--surface-soft);
@@ -188,11 +189,65 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   padding: 9px 11px;
   width: 100%;
 }
+.list-filter-panel { margin-top: 6px; }
+.list-filter-panel summary {
+  align-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+  list-style: none;
+  padding: 2px 1px;
+}
+.list-filter-panel summary::-webkit-details-marker { display: none; }
+.list-filter-panel summary::before { content: "▸"; font-size: 9px; transition: transform .15s ease; }
+.list-filter-panel[open] summary::before { transform: rotate(90deg); }
+.list-filter-panel summary strong {
+  align-items: center;
+  background: var(--ink);
+  border-radius: 999px;
+  color: white;
+  display: inline-flex;
+  font-size: 8px;
+  height: 16px;
+  justify-content: center;
+  min-width: 16px;
+  padding: 0 4px;
+}
+.list-filter-panel summary small { margin-left: auto; }
+.list-filter-grid {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-top: 7px;
+}
+.list-filter-grid label { color: var(--muted); display: grid; font-size: 8px; gap: 2px; min-width: 0; }
+.list-filter-grid select {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 9px;
+  min-width: 0;
+  padding: 5px 4px;
+  width: 100%;
+}
+.clear-list-filters {
+  background: transparent;
+  border: 0;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 9px;
+  margin-top: 5px;
+  padding: 2px 0;
+}
+.clear-list-filters:disabled { color: var(--muted); cursor: default; opacity: .55; }
 .sidebar-message { color: var(--green); flex: 0 0 auto; font-size: 10px; margin: 0; padding: 0 12px 7px; }
 .instrument-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 7px; scrollbar-gutter: stable; }
-.instrument-row { align-items: center; display: grid; gap: 3px; grid-template-columns: minmax(0, 1fr) 28px; }
+.instrument-row { align-items: start; display: grid; gap: 3px; grid-template-columns: minmax(0, 1fr) 28px; }
 .instrument {
-  align-items: center;
+  align-items: flex-start;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 13px;
@@ -207,8 +262,44 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 .instrument:hover { background: var(--surface-soft); }
 .instrument.active { background: var(--accent-soft); border-color: #e7c3af; }
-.instrument > span { display: flex; flex-direction: column; font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.instrument > span strong { font-size: 13px; }
+.instrument-copy { display: flex; flex-direction: column; font-size: 11px; min-width: 0; overflow: hidden; }
+.instrument-symbol-line { align-items: center; display: flex; gap: 5px; min-width: 0; }
+.instrument-symbol-line strong { flex: 0 0 auto; font-size: 13px; }
+.instrument-name { overflow: hidden; text-overflow: ellipsis; }
+.instrument-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.instrument-tags em {
+  background: #eef1ec;
+  border: 1px solid #d9dfd6;
+  border-radius: 999px;
+  color: #526059;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.3;
+  max-width: 126px;
+  overflow: hidden;
+  padding: 1px 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instrument-tags em.tag-warning { background: #fff0df; border-color: #eed0aa; color: #995d19; }
+.instrument-tags em.tag-caution { background: #fae8e4; border-color: #efc8c0; color: var(--red); }
+.instrument-tags em.tag-fresh { background: #e7f2e8; border-color: #cadfcd; color: var(--green); }
+.sector-tag {
+  background: #eef1ec;
+  border: 1px solid #d9dfd6;
+  border-radius: 999px;
+  color: #526059;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.35;
+  max-width: 104px;
+  overflow: hidden;
+  padding: 1px 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .instrument small { flex: 0 0 auto; font-size: 9px; max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-action {
   align-items: center;
@@ -221,6 +312,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   justify-content: center;
   padding: 0;
   width: 27px;
+  margin-top: 8px;
 }
 .row-action:hover { border-color: var(--green); color: var(--green); }
 .row-action.destructive:hover { border-color: var(--red); color: var(--red); }
@@ -246,6 +338,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .plan-strip span { color: var(--muted); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plan-strip strong { font-size: 11px; margin-top: 3px; }
 .status-ready, .status-enabled { color: var(--green); }
+.market-environment-banner {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--muted);
+  border-radius: 15px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(155px, auto) minmax(0, 1fr) auto;
+  padding: 11px 14px;
+}
+.market-environment-banner.regime-normal { border-left-color: var(--green); }
+.market-environment-banner.regime-caution { border-left-color: #b27639; }
+.market-environment-banner.regime-severe { border-left-color: var(--red); background: #fff8f5; }
+.market-environment-summary { display: flex; flex-direction: column; }
+.market-environment-summary > strong { font-size: 17px; margin: 2px 0; }
+.market-environment-summary > small, .market-environment-meta { color: var(--muted); font-size: 9px; }
+.market-environment-reasons { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.market-environment-reasons span { background: var(--surface-soft); border-radius: 8px; color: var(--ink); font-size: 10px; padding: 5px 7px; }
+.market-environment-meta { align-items: center; display: flex; gap: 7px; white-space: nowrap; }
 .instrument-header, .chart-card, .stage-card, .factor-card, .detail-card, .ai-review-card, .loading-card, .error-card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -346,12 +458,45 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .custom-range-control label { color: var(--muted); display: flex; flex-direction: column; font-size: 9px; }
 .custom-range-control input { border: 1px solid var(--line); border-radius: 7px; padding: 5px; }
 .custom-range-control button { background: var(--ink); border: 0; border-radius: 8px; color: white; padding: 5px 9px; }
+.price-chart-shell { position: relative; }
+.chart-zoom-controls {
+  align-items: center;
+  background: rgba(255, 253, 248, .94);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  position: absolute;
+  right: 52px;
+  top: 7px;
+  z-index: 4;
+}
+.chart-zoom-controls span { color: var(--muted); font-size: 9px; padding: 0 5px; }
+.chart-zoom-controls button {
+  background: var(--surface-soft);
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  height: 25px;
+  min-width: 27px;
+  padding: 0 7px;
+}
+.chart-zoom-controls button:hover { background: var(--ink); color: white; }
 .price-chart { min-height: 460px; width: 100%; }
-.decision-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.decision-card, .direction-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
-.decision-card > strong, .direction-card > strong { display: block; font-size: 25px; margin: 5px 0; }
+.decision-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.decision-card, .entry-stage-card, .direction-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+.decision-card > strong, .entry-stage-card > strong, .direction-card > strong { display: block; font-size: 25px; margin: 5px 0; }
 .decision-card p { margin: 7px 0; }
 .decision-card small, .direction-card small { color: var(--muted); }
+.entry-stage-card small { color: var(--muted); }
+.entry-stage-card.entry-entry_ready { border-color: #7f9d82; box-shadow: inset 0 4px 0 #44765a; }
+.entry-stage-card.entry-wait_for_pullback { border-color: #d9b98c; box-shadow: inset 0 4px 0 #b27639; }
+.entry-stage-card.entry-avoid { border-color: #d7a4a0; box-shadow: inset 0 4px 0 #a64a43; }
+.execution-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0; }
+.execution-metrics span { background: var(--surface-muted); border-radius: 9px; color: var(--muted); font-size: 10px; padding: 8px; }
+.execution-metrics b { color: var(--ink); display: block; font-size: 14px; margin-top: 3px; }
 .action-buy_candidate { color: var(--green); }
 .action-watch { color: #8b681f; }
 .action-avoid_new_buy, .direction-down { color: var(--red); }
@@ -438,6 +583,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .main-panel { overflow: visible; padding-right: 0; }
   .plan-strip { display: flex; overflow-x: auto; }
   .plan-strip > div { flex: 0 0 125px; }
+  .market-environment-banner { align-items: start; grid-template-columns: 1fr auto; }
+  .market-environment-reasons { grid-column: 1 / -1; }
   .instrument-header { align-items: start; grid-template-columns: 1fr; }
   .latest-price { text-align: left; }
   .analysis-context { grid-column: auto; grid-template-columns: 1fr; }
@@ -447,6 +594,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .range-switch { max-width: 100%; overflow-x: auto; }
   .custom-range-control { margin-left: 0; }
   .custom-range-control form { flex-direction: column; left: 0; right: auto; }
+  .chart-zoom-controls { right: 8px; }
+  .chart-zoom-controls span { display: none; }
   .price-chart { min-height: 390px; }
   .decision-grid, .condition-list, .factor-grid, .detail-grid, .position-size { grid-template-columns: 1fr; }
   .position-size small { grid-column: auto; }

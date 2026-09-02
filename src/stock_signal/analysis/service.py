@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from stock_signal.analysis.base import AnalysisEngine
 from stock_signal.analysis.decision import LongOnlyDecisionPolicy
 from stock_signal.analysis.engine import RuleBasedAnalysisEngine
@@ -11,6 +13,10 @@ from stock_signal.database import (
 )
 from stock_signal.domain.analysis import AnalysisContext, AnalysisResult
 from stock_signal.domain.dashboard import WatchlistItem
+from stock_signal.market_environment import (
+    apply_market_regime_gate,
+    latest_market_regime_for_analysis,
+)
 
 _ACTION_RANK = {
     "buy_candidate": 3,
@@ -56,7 +62,11 @@ class AnalysisService:
             ),
             jquants_plan=self.jquants_plan,
         )
-        return self.engine.analyze(symbol, bars, horizon_days, context)
+        result = self.engine.analyze(symbol, bars, horizon_days, context)
+        return apply_market_regime_gate(
+            result,
+            latest_market_regime_for_analysis(self.database_url, as_of),
+        )
 
     def analyze_watchlist(self, horizon_days: int) -> list[tuple[str, AnalysisResult]]:
         results = self.analyze_items(
@@ -89,6 +99,14 @@ class AnalysisService:
         earnings_synced = data_sync_succeeded(
             self.database_url, "jquants_earnings_calendar"
         )
+        latest_as_of = max(
+            (item.latest_trade_date for item in items if item.latest_trade_date),
+            default=None,
+        )
+        market_regime = latest_market_regime_for_analysis(
+            self.database_url,
+            date.fromisoformat(latest_as_of) if latest_as_of else None,
+        )
         results = []
         for item in items:
             bars = load_daily_bars(
@@ -110,7 +128,10 @@ class AnalysisService:
             results.append(
                 (
                     item.display_name,
-                    self.engine.analyze(item.symbol, bars, horizon_days, context),
+                    apply_market_regime_gate(
+                        self.engine.analyze(item.symbol, bars, horizon_days, context),
+                        market_regime,
+                    ),
                 )
             )
         return results

@@ -23,9 +23,11 @@ from stock_signal.database import (
     load_daily_bars,
     upsert_daily_bars,
 )
+from stock_signal.market_environment import MarketEnvironmentService, market_regime_as_dict
 from stock_signal.market_sync import sync_bulk_daily_bars, sync_instrument_master
 from stock_signal.persistence.sqlite_import import import_sqlite_database
 from stock_signal.portfolios import JQUANTS_INITIAL_INSTRUMENTS
+from stock_signal.providers.alpha_vantage import AlphaVantageProvider
 from stock_signal.providers.base import MarketDataError
 from stock_signal.providers.factory import create_market_data_provider
 from stock_signal.providers.jquants import JQuantsProvider
@@ -131,6 +133,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="外部サービスを呼ばずに予定処理を表示する",
+    )
+    subparsers.add_parser(
+        "preopen",
+        help="東京市場の寄り付き前に外部市場環境を取得・判定する",
     )
     return parser
 
@@ -370,6 +376,20 @@ def _run_command(args: argparse.Namespace, settings: Settings) -> int:
             display_name=(instruments[0].display_name if instruments else None),
         )
         print(f"過去当てはめ実績レポートを生成しました: {output_path}")
+        return 0
+
+    if args.command == "preopen":
+        provider = AlphaVantageProvider(
+            api_key=settings.alpha_vantage_api_key,
+            minimum_request_interval=(
+                settings.market_environment_request_interval_seconds
+            ),
+        )
+        snapshot = MarketEnvironmentService(
+            settings.database_url,
+            provider,
+        ).run()
+        print(json.dumps(market_regime_as_dict(snapshot), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "daily":

@@ -66,7 +66,7 @@ def make_rectangle_breakout(
             provider="test",
             is_adjusted=False,
         ))
-    close = 104 if direction is Direction.UP else 96
+    close = 103 if direction is Direction.UP else 97
     normal_open = 101 if direction is Direction.UP else 99
     opening = (108 if direction is Direction.UP else 92) if gap_driven else normal_open
     bars.append(DailyBar(
@@ -224,7 +224,9 @@ def test_position_style_distinguishes_pullback_from_chasing_uptrend() -> None:
         for support in result.position_entry.supports
     )
     assert result.investment_decision is not None
-    assert result.investment_decision.action is InvestmentAction.BUY_CANDIDATE
+    assert result.investment_decision.action is InvestmentAction.WATCH
+    assert result.investment_decision.entry_stage.value == "conditional_entry"
+    assert result.position_entry.risk_reward_ratio == 1.32
 
 
 def test_position_style_waits_when_support_touch_has_no_rebound() -> None:
@@ -288,6 +290,9 @@ def test_confirmed_rectangle_breakout_becomes_buy_candidate() -> None:
     assert result.patterns[0].breakout_atr is not None
     assert result.patterns[0].breakout_atr >= 0.1
     assert result.pattern_lifecycles[0].status is PatternLifecycleStatus.ENTRY_WINDOW
+    assert result.investment_decision.entry_stage.value == "entry_ready"
+    assert result.investment_decision.execution_risk_reward_ratio is not None
+    assert result.pattern_lifecycles[0].execution_stop_price is not None
 
 
 def test_breakout_levels_keep_the_breakout_day_atr() -> None:
@@ -314,6 +319,40 @@ def test_breakout_levels_keep_the_breakout_day_atr() -> None:
     assert initial.pattern_lifecycles[0].target_price == (
         after_volatility.pattern_lifecycles[0].target_price
     )
+
+
+def test_extended_breakout_is_removed_from_new_buy_candidates() -> None:
+    bars = make_rectangle_breakout(direction=Direction.UP)
+    start = bars[-1].trade_date
+    for offset, close in enumerate((103.5, 104.0, 104.5, 105.0), start=1):
+        bars.append(DailyBar(
+            symbol="TEST",
+            trade_date=start + timedelta(days=offset),
+            open=Decimal(str(close - 0.2)),
+            high=Decimal(str(close + 0.5)),
+            low=Decimal(str(close - 0.5)),
+            close=Decimal(str(close)),
+            volume=1000,
+            provider="test",
+            is_adjusted=False,
+        ))
+
+    result = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
+
+    lifecycle = result.pattern_lifecycles[0]
+    assert lifecycle.status is PatternLifecycleStatus.OVEREXTENDED
+    assert lifecycle.entry_window_days == 3
+    assert lifecycle.entry_days_remaining == 0
+    assert lifecycle.breakout_distance_atr is not None
+    assert lifecycle.breakout_distance_atr > 1.0
+    assert lifecycle.target_progress_percent >= 50.0
+    assert lifecycle.remaining_risk_reward_ratio is not None
+    assert lifecycle.remaining_risk_reward_ratio < 1.0
+    assert result.investment_decision is not None
+    assert result.investment_decision.action is InvestmentAction.WATCH
+    assert "新規追随" in result.investment_decision.summary
+    assert "ATR" in lifecycle.summary
+    assert "想定値幅" in lifecycle.summary
 
 
 def test_breakout_is_an_event_and_recent_reversal_weakens_signal() -> None:
@@ -602,9 +641,9 @@ def test_mvp_pattern_families_are_detected_by_objective_shapes() -> None:
     )
 
     double_values = [
-        100, 99, 98, 96, 94, 92, 94, 97, 100, 102, 100, 98, 96, 94, 92.5,
-        94, 97, 100, 102, 101, 100, 99, 100, 101, 102, 102.5, 102.7, 102.8,
-        102.9, 103,
+        100, 99, 98, 96, 94, 92, 94, 97, 100, 102, 101, 100, 99, 98, 97,
+        96, 94, 92.5, 94, 97, 100, 102, 101, 100, 99, 100, 101, 102, 103,
+        103,
     ]
     double_rows = [(value, value + 1, value - 1, value, 1000) for value in double_values]
     double_patterns = TechnicalPatternDetector().detect(
@@ -630,4 +669,53 @@ def test_mvp_pattern_families_are_detected_by_objective_shapes() -> None:
     assert any(
         pattern.pattern_type is PatternType.HEAD_AND_SHOULDERS_TOP
         for pattern in head_patterns
+    )
+
+
+def test_short_w_shape_is_not_classified_as_daily_double_bottom() -> None:
+    declining_base = [
+        (120 - index * 0.5, 121 - index * 0.5, 119 - index * 0.5,
+         120 - index * 0.5, 1000)
+        for index in range(40)
+    ]
+    short_w = [
+        100, 98, 96, 94, 92, 94, 97, 101, 103, 101, 98, 95, 92.5, 94,
+        98, 101, 103, 102, 102, 102,
+    ]
+    rows = [
+        *declining_base,
+        *((value, value + 1, value - 1, value, 1000) for value in short_w),
+        (103, 106, 102, 105, 2000),
+    ]
+
+    patterns = TechnicalPatternDetector().detect(make_custom_bars(rows))
+
+    assert all(
+        pattern.pattern_type is not PatternType.DOUBLE_BOTTOM
+        for pattern in patterns
+    )
+
+
+def test_w_shape_during_prior_uptrend_is_not_a_double_bottom_reversal() -> None:
+    rising_base = [
+        (80 + index * 0.5, 81 + index * 0.5, 79 + index * 0.5,
+         80 + index * 0.5, 1000)
+        for index in range(40)
+    ]
+    long_w = [
+        100, 99, 98, 96, 94, 92, 94, 97, 100, 102, 101, 100, 99, 98, 97,
+        96, 94, 92.5, 94, 97, 100, 102, 101, 100, 99, 100, 101, 102, 103,
+        103,
+    ]
+    rows = [
+        *rising_base,
+        *((value, value + 1, value - 1, value, 1000) for value in long_w),
+        (103, 106, 102, 105, 2000),
+    ]
+
+    patterns = TechnicalPatternDetector().detect(make_custom_bars(rows))
+
+    assert all(
+        pattern.pattern_type is not PatternType.DOUBLE_BOTTOM
+        for pattern in patterns
     )

@@ -6,6 +6,7 @@ x-common-environment: &common-environment
   JQUANTS_PLAN: ${JQUANTS_PLAN:-light}
   MARKET_SCREENING_LIMIT: ${MARKET_SCREENING_LIMIT:-500}
   NOTIFICATION_DRY_RUN: ${NOTIFICATION_DRY_RUN:-true}
+  MARKET_ENVIRONMENT_REQUEST_INTERVAL_SECONDS: ${MARKET_ENVIRONMENT_REQUEST_INTERVAL_SECONDS:-12.1}
 
 x-stock-signal: &stock-signal
   image: tomoshibiyori:local
@@ -64,6 +65,16 @@ services:
       ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
       JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  preopen:
+    <<: *stock-signal
+    command: ["stock-signal", "preopen"]
+    environment:
+      <<: *common-environment
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

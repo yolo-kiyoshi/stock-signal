@@ -11,6 +11,19 @@ class WatchlistItem:
     display_name: str
     exchange: str
     currency: str
+    sector_33_code: str | None = None
+    sector_33_name: str | None = None
+    market: str | None = None
+    instrument_type: str | None = None
+    sector_17_code: str | None = None
+    sector_17_name: str | None = None
+    next_earnings_date: str | None = None
+    days_to_earnings: int | None = None
+    liquidity_rank: str = "unknown"
+    median_turnover: Decimal | None = None
+    latest_trade_date: str | None = None
+    data_age_days: int | None = None
+    freshness_status: str = "missing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +48,9 @@ class Instrument:
     provider: str
     display_name: str
     market: str
+    sector_17_code: str | None
+    sector_17_name: str | None
+    sector_33_code: str | None
     sector_33_name: str | None
     instrument_type: str
     is_active: bool
@@ -62,6 +78,18 @@ class Position:
     memo: str | None
     latest_close: Decimal | None = None
     latest_trade_date: str | None = None
+    sector_33_code: str | None = None
+    sector_33_name: str | None = None
+    market: str | None = None
+    instrument_type: str | None = None
+    sector_17_code: str | None = None
+    sector_17_name: str | None = None
+    next_earnings_date: str | None = None
+    days_to_earnings: int | None = None
+    liquidity_rank: str = "unknown"
+    median_turnover: Decimal | None = None
+    data_age_days: int | None = None
+    freshness_status: str = "missing"
 
 
 @dataclass(frozen=True, slots=True)

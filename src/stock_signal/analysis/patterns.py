@@ -58,6 +58,7 @@ class TechnicalPatternDetector:
 
     scan_days = 25
     formation_days = 30
+    minimum_double_pattern_duration = 10
 
     @staticmethod
     def _crossed(
@@ -260,7 +261,11 @@ class TechnicalPatternDetector:
             has_higher_middle = max(highs[left + 1:right], default=0) > max(
                 highs[left], highs[right]
             ) * 1.015
-            if 5 <= right - left <= 35 and similarity <= 0.03 and not has_higher_middle:
+            if (
+                self.minimum_double_pattern_duration <= right - left <= 35
+                and similarity <= 0.03
+                and not has_higher_middle
+            ):
                 neckline = min(lows[left:right + 1])
                 if self._crossed(
                     bars, context, neckline, threshold, Direction.DOWN
@@ -269,6 +274,9 @@ class TechnicalPatternDetector:
                     common = self._common_fields(
                         bars, context, neckline, Direction.DOWN, start + left
                     )
+                    prior_trend = common["prior_trend_score"]
+                    if prior_trend is None or prior_trend <= 0:
+                        continue
                     results.append(PatternDetection(
                         PatternType.DOUBLE_TOP, "ダブルトップ", Direction.DOWN,
                         fit_score=round(fit, 1), duration_days=right - left,
@@ -286,7 +294,11 @@ class TechnicalPatternDetector:
             has_lower_middle = min(lows[left + 1:right], default=float("inf")) < min(
                 lows[left], lows[right]
             ) * 0.985
-            if 5 <= right - left <= 35 and similarity <= 0.03 and not has_lower_middle:
+            if (
+                self.minimum_double_pattern_duration <= right - left <= 35
+                and similarity <= 0.03
+                and not has_lower_middle
+            ):
                 neckline = max(highs[left:right + 1])
                 if self._crossed(
                     bars, context, neckline, threshold, Direction.UP
@@ -295,6 +307,9 @@ class TechnicalPatternDetector:
                     common = self._common_fields(
                         bars, context, neckline, Direction.UP, start + left
                     )
+                    prior_trend = common["prior_trend_score"]
+                    if prior_trend is None or prior_trend >= 0:
+                        continue
                     results.append(PatternDetection(
                         PatternType.DOUBLE_BOTTOM, "ダブルボトム", Direction.UP,
                         fit_score=round(fit, 1), duration_days=right - left,

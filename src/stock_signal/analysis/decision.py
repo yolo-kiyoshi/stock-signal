@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import date
 from statistics import median
 
@@ -11,6 +12,7 @@ from stock_signal.domain.analysis import (
     BreakoutKind,
     CheckStatus,
     Direction,
+    EntryStage,
     EquityCheck,
     InvestmentAction,
     InvestmentDecision,
@@ -164,7 +166,7 @@ class LongOnlyDecisionPolicy:
             )
 
         market = self._market_check(context, bars, horizon_days)
-        relative_strength, beta = self._relative_checks(
+        relative_strength, relative_strength_short, beta = self._relative_checks(
             context, bars, horizon_days
         )
         earnings = self._earnings_check(context, bars, horizon_days)
@@ -209,6 +211,7 @@ class LongOnlyDecisionPolicy:
             liquidity,
             market,
             relative_strength,
+            relative_strength_short,
             beta,
             sector,
             earnings,
@@ -216,6 +219,119 @@ class LongOnlyDecisionPolicy:
         )
 
     def decide(
+        self,
+        direction: Direction,
+        scores: dict[Direction, float],
+        patterns: Sequence[PatternDetection],
+        lifecycles: Sequence[PatternLifecycleAssessment],
+        transition: TransitionReadiness,
+        position_entry: PositionEntryAssessment | None,
+        checks: Sequence[EquityCheck],
+        horizon_days: int,
+    ) -> InvestmentDecision:
+        """方向評価とエントリー可否を分離し、実行用指標を付与する。"""
+        decision = self._decide(
+            direction,
+            scores,
+            patterns,
+            lifecycles,
+            transition,
+            position_entry,
+            checks,
+            horizon_days,
+        )
+        latest = self._latest_patterns(patterns)
+        lead = max(latest, key=lambda item: item.fit_score) if latest else None
+        lifecycle_by_type = {item.pattern_type: item for item in lifecycles}
+        lifecycle = lifecycle_by_type.get(lead.pattern_type) if lead else None
+
+        if decision.action is InvestmentAction.BUY_CANDIDATE:
+            stage = EntryStage.ENTRY_READY
+            entry_score = decision.evidence_score
+        elif decision.action is InvestmentAction.AVOID_NEW_BUY:
+            stage = EntryStage.AVOID
+            entry_score = 0.0
+        elif (
+            direction is Direction.DOWN
+            and not any(item.direction is Direction.UP for item in latest)
+        ) or (
+            horizon_days == 20
+            and position_entry is not None
+            and position_entry.phase
+            in {PositionEntryPhase.TREND_BROKEN, PositionEntryPhase.NO_SETUP}
+        ) or (
+            horizon_days == 5
+            and lifecycle is not None
+            and lifecycle.status
+            in {
+                PatternLifecycleStatus.MONITORING,
+                PatternLifecycleStatus.TARGET_REACHED,
+                PatternLifecycleStatus.EXPIRED,
+            }
+        ):
+            stage = EntryStage.NOT_APPLICABLE
+            entry_score = 0.0
+        elif (
+            horizon_days == 20
+            and position_entry is not None
+            and position_entry.phase is PositionEntryPhase.TREND_EXTENDED
+        ) or (
+            horizon_days == 5
+            and lifecycle is not None
+            and lifecycle.status is PatternLifecycleStatus.OVEREXTENDED
+        ):
+            stage = EntryStage.WAIT_FOR_PULLBACK
+            entry_score = min(decision.evidence_score, 40.0)
+        elif (
+            transition.phase is TransitionPhase.ONE_GATE_REMAINING
+            or position_entry is not None
+            and position_entry.phase in {
+                PositionEntryPhase.SUPPORT_TEST,
+                PositionEntryPhase.APPROACHING_SUPPORT,
+                PositionEntryPhase.PULLBACK_CANDIDATE,
+            }
+        ):
+            stage = EntryStage.CONDITIONAL_ENTRY
+            entry_score = min(decision.evidence_score, 75.0)
+        else:
+            stage = EntryStage.SETUP_CONFIRMED
+            entry_score = min(decision.evidence_score, 60.0)
+
+        execution_stop = (
+            position_entry.invalidation_price
+            if horizon_days == 20 and position_entry is not None
+            else lifecycle.execution_stop_price if lifecycle is not None else None
+        )
+        target = (
+            position_entry.target_price
+            if horizon_days == 20 and position_entry is not None
+            else lifecycle.target_price if lifecycle is not None else None
+        )
+        risk_reward = (
+            position_entry.risk_reward_ratio
+            if horizon_days == 20 and position_entry is not None
+            else lifecycle.execution_risk_reward_ratio
+            if lifecycle is not None
+            else None
+        )
+        setup_score = (
+            lead.fit_score
+            if lead is not None
+            else position_entry.readiness_score
+            if position_entry is not None
+            else transition.readiness_score
+        )
+        return replace(
+            decision,
+            entry_stage=stage,
+            setup_score=round(setup_score, 1),
+            entry_score=round(entry_score, 1),
+            execution_stop_price=execution_stop,
+            expected_target_price=target,
+            execution_risk_reward_ratio=risk_reward,
+        )
+
+    def _decide(
         self,
         direction: Direction,
         scores: dict[Direction, float],
@@ -367,6 +483,14 @@ class LongOnlyDecisionPolicy:
                     InvestmentAction.WATCH,
                     evidence_score,
                     "新規購入の初期期間を過ぎたため、保有管理として経過を監視します",
+                    tuple(reasons),
+                    tuple(cautions),
+                )
+            if lifecycle.status is PatternLifecycleStatus.OVEREXTENDED:
+                return InvestmentDecision(
+                    InvestmentAction.WATCH,
+                    evidence_score,
+                    "上抜け後の値幅を消化しているため、新規追随を避けて押し目を待ちます",
                     tuple(reasons),
                     tuple(cautions),
                 )
@@ -598,6 +722,38 @@ class LongOnlyDecisionPolicy:
                 tuple(reasons),
                 tuple(cautions),
             )
+        relative_short = next(
+            check for check in checks if check.key == "relative_strength_short"
+        )
+        if relative_short.value is not None and relative_short.value < -3:
+            reasons.append(f"短期TOPIX相対力は{relative_short.value:+.2f}%です")
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "直近20営業日の市場対比が弱いため、反発の継続を待ちます",
+                tuple(reasons),
+                tuple(cautions),
+            )
+        if (
+            assessment.phase is PositionEntryPhase.PULLBACK_CANDIDATE
+            and (
+                assessment.risk_reward_ratio is None
+                or assessment.risk_reward_ratio < 1.5
+            )
+        ):
+            ratio_text = (
+                "算出不可"
+                if assessment.risk_reward_ratio is None
+                else f"{assessment.risk_reward_ratio:.2f}"
+            )
+            reasons.append(f"上値抵抗までのリワード／リスクは{ratio_text}です")
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "支持帯反発は確認しましたが、上値余地が小さいため条件付きです",
+                tuple(reasons),
+                tuple(cautions),
+            )
 
         if assessment.phase is PositionEntryPhase.PULLBACK_CANDIDATE:
             nearest = next(
@@ -652,7 +808,7 @@ class LongOnlyDecisionPolicy:
         context: AnalysisContext,
         bars: Sequence[DailyBar],
         horizon_days: int,
-    ) -> tuple[EquityCheck, EquityCheck]:
+    ) -> tuple[EquityCheck, EquityCheck, EquityCheck]:
         profile = get_horizon_profile(horizon_days)
         market_bars = [
             bar for bar in context.market_bars
@@ -670,6 +826,7 @@ class LongOnlyDecisionPolicy:
             message = (
                 "TOPIXとの共通取引日が不足しているため、まだ計算できません"
             )
+            short_message = "直近20営業日のTOPIX相対力もまだ計算できません"
             return (
                 EquityCheck(
                     "relative_strength",
@@ -678,6 +835,14 @@ class LongOnlyDecisionPolicy:
                     None,
                     "%",
                     message,
+                ),
+                EquityCheck(
+                    "relative_strength_short",
+                    "短期TOPIX相対力",
+                    unavailable,
+                    None,
+                    "%",
+                    short_message,
                 ),
                 EquityCheck(
                     "beta_topix",
@@ -697,6 +862,30 @@ class LongOnlyDecisionPolicy:
             f"{metrics.window}営業日で対象株{metrics.stock_return_percent:+.2f}%、"
             f"TOPIX{metrics.market_return_percent:+.2f}%との差です",
         )
+        short_window = 20
+        short_metrics = calculate_market_relative_metrics(
+            bars, market_bars, short_window
+        )
+        relative_short = EquityCheck(
+            "relative_strength_short",
+            "短期TOPIX相対力",
+            (
+                CheckStatus.EVALUATED
+                if short_metrics is not None
+                else CheckStatus.PENDING_DATA
+            ),
+            (
+                short_metrics.relative_strength_percent
+                if short_metrics is not None
+                else None
+            ),
+            "%",
+            (
+                f"直近{short_window}営業日の対象株とTOPIXの騰落率差です"
+                if short_metrics is not None
+                else "直近20営業日の共通取引日が不足しています"
+            ),
+        )
         beta = EquityCheck(
             "beta_topix",
             "対TOPIXベータ",
@@ -710,7 +899,7 @@ class LongOnlyDecisionPolicy:
                 else "TOPIXの日次変動がないためベータを計算できません"
             ),
         )
-        return relative, beta
+        return relative, relative_short, beta
 
     @staticmethod
     def _market_check(

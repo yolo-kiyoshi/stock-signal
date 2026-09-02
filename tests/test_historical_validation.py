@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -8,7 +9,12 @@ from stock_signal.analysis.historical_validation import (
     calculate_realized_outcome,
     classify_realized_direction,
 )
-from stock_signal.domain.analysis import AnalysisResult, Direction
+from stock_signal.domain.analysis import (
+    AnalysisResult,
+    Direction,
+    InvestmentAction,
+    InvestmentDecision,
+)
 from stock_signal.domain.market_data import DailyBar
 
 
@@ -77,6 +83,42 @@ def test_realized_outcome_uses_as_of_atr_and_market_return() -> None:
         outcome.return_percent - 1.0,
         abs=0.001,
     )
+
+
+def test_realized_outcome_uses_next_open_and_records_path_risk() -> None:
+    dates = _business_dates(date(2026, 1, 5), 27)
+    history = [_bar(day, 100) for day in dates[:25]]
+    entry = replace(
+        _bar(dates[25], 106),
+        open=Decimal("105"),
+        high=Decimal("112"),
+        low=Decimal("102"),
+    )
+    target = replace(
+        _bar(dates[26], 110),
+        high=Decimal("110"),
+        low=Decimal("104"),
+    )
+
+    outcome = calculate_realized_outcome(
+        history,
+        target,
+        0.5,
+        entry_bar=entry,
+        path_bars=[entry, target],
+        stop_price=103,
+        target_price=111,
+    )
+
+    assert outcome is not None
+    assert outcome.start_date == dates[25]
+    assert outcome.start_close == 105
+    assert outcome.return_percent == pytest.approx(4.762, abs=0.001)
+    assert outcome.target_hit is True
+    assert outcome.stop_hit is True
+    assert outcome.exit_reason == "same_day_stop_first"
+    assert outcome.maximum_favorable_excursion_percent == pytest.approx(6.667)
+    assert outcome.maximum_adverse_excursion_percent == pytest.approx(-2.857)
 
 
 def test_historical_service_does_not_pass_future_bars_to_engine(monkeypatch) -> None:
@@ -205,6 +247,13 @@ def test_validate_range_loads_stock_and_market_data_only_once(monkeypatch) -> No
                 factors=(),
                 engine_id="stub",
                 engine_version="1.0.0",
+                investment_decision=InvestmentDecision(
+                    InvestmentAction.BUY_CANDIDATE,
+                    70.0,
+                    "テスト用購入候補",
+                    (),
+                    (),
+                ),
             )
 
     def fake_load(_database_url, symbol, **_kwargs):
@@ -234,4 +283,7 @@ def test_validate_range_loads_stock_and_market_data_only_once(monkeypatch) -> No
     assert len(points) == 11
     assert {result.horizon_days for result in points[0].results} == {5, 20}
     assert all(result.status == "ready" for point in points for result in point.results)
+    assert sum(
+        result.event_started for point in points for result in point.results
+    ) == 2
     assert progress == [(1, 11, dates[60]), (11, 11, dates[70])]

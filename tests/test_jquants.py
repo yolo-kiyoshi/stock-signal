@@ -200,6 +200,7 @@ def test_fetches_instrument_master_for_bulk_registration() -> None:
     instruments = provider.fetch_instrument_master(date(2026, 8, 14))
 
     assert instruments[0].symbol == "7203"
+    assert instruments[0].sector_33_code == "3700"
     assert instruments[0].sector_33_name == "輸送用機器"
     assert instruments[0].as_of_date == date(2026, 8, 14)
     assert client.calls[0][0].endswith("/v2/equities/master")

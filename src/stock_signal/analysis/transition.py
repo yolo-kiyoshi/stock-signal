@@ -347,6 +347,14 @@ class TransitionReadinessEvaluator:
                 PatternLifecycleStatus.FAILED,
             }:
                 return TransitionPhase.CAUTION
+        if any(
+            pattern.direction is Direction.UP
+            and lifecycle_by_type.get(pattern.pattern_type) is not None
+            and lifecycle_by_type[pattern.pattern_type].status
+            is PatternLifecycleStatus.ENTRY_WINDOW
+            for pattern in patterns
+        ):
+            return TransitionPhase.BREAKOUT_CONFIRMED
         if breakout_confirmed and unmet_count == 0:
             return TransitionPhase.EARLY_REVERSAL
         if unmet_count == 1:
@@ -369,6 +377,7 @@ class TransitionReadinessEvaluator:
             TransitionPhase.PREPARING: "底固めと短期改善を確認し、転換水準を待っています",
             TransitionPhase.ONE_GATE_REMAINING: "転換条件はあと1つです",
             TransitionPhase.EARLY_REVERSAL: "価格と出来高による転換初動を確認しました",
+            TransitionPhase.BREAKOUT_CONFIRMED: "上向きブレイクを確認しました",
             TransitionPhase.UPTREND: "すでに上昇方向で、先回り段階は過ぎています",
             TransitionPhase.CAUTION: "パターンの勢い弱化または失敗を警戒します",
         }

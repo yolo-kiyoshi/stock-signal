@@ -58,10 +58,22 @@ class InvestmentAction(StrEnum):
     INSUFFICIENT_DATA = "insufficient_data"
 
 
+class EntryStage(StrEnum):
+    """価格の方向とは別に表す、新規購入の準備段階。"""
+
+    SETUP_CONFIRMED = "setup_confirmed"
+    CONDITIONAL_ENTRY = "conditional_entry"
+    ENTRY_READY = "entry_ready"
+    WAIT_FOR_PULLBACK = "wait_for_pullback"
+    AVOID = "avoid"
+    NOT_APPLICABLE = "not_applicable"
+
+
 class PatternLifecycleStatus(StrEnum):
     """ブレイク発生後のパターンの状態。"""
 
     ENTRY_WINDOW = "entry_window"
+    OVEREXTENDED = "overextended"
     MONITORING = "monitoring"
     WEAKENING = "weakening"
     TARGET_REACHED = "target_reached"
@@ -87,6 +99,7 @@ class TransitionPhase(StrEnum):
     PREPARING = "preparing"
     ONE_GATE_REMAINING = "one_gate_remaining"
     EARLY_REVERSAL = "early_reversal"
+    BREAKOUT_CONFIRMED = "breakout_confirmed"
     UPTREND = "uptrend"
     CAUTION = "caution"
 
@@ -137,9 +150,16 @@ class PatternLifecycleAssessment:
     breakout_close: float
     target_price: float
     invalidation_price: float
+    breakout_distance_atr: float | None
+    target_progress_percent: float
+    remaining_risk_reward_ratio: float | None
     post_breakout_return_percent: float
     recent_momentum_atr: float | None
     summary: str
+    execution_stop_price: float | None = None
+    execution_risk_reward_ratio: float | None = None
+    three_day_momentum_atr: float | None = None
+    distance_from_sma5_atr: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +207,7 @@ class PositionSupportLevel:
     touched: bool
     held: bool
     description: str
+    touch_age_days: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +235,10 @@ class PositionEntryAssessment:
     current_price: float
     atr: float
     invalidation_price: float | None
+    target_price: float | None = None
+    risk_reward_ratio: float | None = None
+    volume_ratio: float | None = None
+    support_touch_age_days: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +262,12 @@ class InvestmentDecision:
     summary: str
     reasons: tuple[str, ...]
     cautions: tuple[str, ...]
+    entry_stage: EntryStage = EntryStage.NOT_APPLICABLE
+    setup_score: float | None = None
+    entry_score: float | None = None
+    execution_stop_price: float | None = None
+    expected_target_price: float | None = None
+    execution_risk_reward_ratio: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
