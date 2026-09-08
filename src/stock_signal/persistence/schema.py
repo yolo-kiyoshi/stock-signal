@@ -328,3 +328,22 @@ Index(
     "idx_market_regime_snapshots_latest",
     market_regime_snapshots.c.decision_date.desc(),
 )
+
+financial_disclosures = Table(
+    "financial_disclosures",
+    metadata,
+    Column("symbol", String(12), primary_key=True),
+    Column("provider", String(40), primary_key=True),
+    Column("disclosure_no", String(80), primary_key=True),
+    Column("disclosed_date", Date, nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("first_seen_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+)
+
+portfolio_risk_settings = Table(
+    "portfolio_risk_settings",
+    metadata,
+    Column("name", String(100), primary_key=True),
+    Column("payload", JSONB, nullable=False),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+)

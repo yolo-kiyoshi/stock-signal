@@ -36,7 +36,7 @@ class RuleBasedAnalysisEngine:
     """注入されたルールを集計する、決定論的な分析エンジン。"""
 
     engine_id = "rule_based_technical"
-    version = "2.9.0"
+    version = "2.11.0"
 
     def __init__(
         self,
@@ -51,9 +51,7 @@ class RuleBasedAnalysisEngine:
         self.pattern_detector = pattern_detector or TechnicalPatternDetector()
         self.lifecycle_evaluator = lifecycle_evaluator or PatternLifecycleEvaluator()
         self.transition_evaluator = transition_evaluator or TransitionReadinessEvaluator()
-        self.position_entry_evaluator = (
-            position_entry_evaluator or PositionEntryEvaluator()
-        )
+        self.position_entry_evaluator = position_entry_evaluator or PositionEntryEvaluator()
         self.decision_policy = decision_policy or LongOnlyDecisionPolicy()
 
     def analyze(
@@ -66,14 +64,22 @@ class RuleBasedAnalysisEngine:
         profile = get_horizon_profile(horizon_days)
         ordered = sorted(bars, key=lambda bar: bar.trade_date)
         as_of_date = ordered[-1].trade_date.isoformat() if ordered else ""
-        if len(ordered) < profile.minimum_bars:
+        invalid_range = len(ordered) >= profile.minimum_bars and (wilder_atr(ordered) or 0) <= 0
+        if len(ordered) < profile.minimum_bars or invalid_range:
             return AnalysisResult(
-                symbol=symbol.upper(), as_of_date=as_of_date, horizon_days=horizon_days,
-                direction=Direction.FLAT, scores={direction: 0.0 for direction in Direction},
-                factors=(), engine_id=self.engine_id, engine_version=self.version,
+                symbol=symbol.upper(),
+                as_of_date=as_of_date,
+                horizon_days=horizon_days,
+                direction=Direction.FLAT,
+                scores={direction: 0.0 for direction in Direction},
+                factors=(),
+                engine_id=self.engine_id,
+                engine_version=self.version,
                 status="insufficient_data",
                 message=(
-                    f"{profile.label}分析には最低{profile.minimum_bars}営業日の"
+                    "日足の値幅がなくATRを計算できないため判定できません"
+                    if invalid_range
+                    else f"{profile.label}分析には最低{profile.minimum_bars}営業日の"
                     "日足が必要です"
                     f"（現在{len(ordered)}件）"
                 ),
@@ -96,9 +102,7 @@ class RuleBasedAnalysisEngine:
             latest_patterns = [
                 pattern for pattern in patterns if pattern.detected_at == latest_date
             ]
-            lifecycle_by_type = {
-                item.pattern_type: item for item in pattern_lifecycles
-            }
+            lifecycle_by_type = {item.pattern_type: item for item in pattern_lifecycles}
             risk_unit = wilder_atr(ordered) or max(float(ordered[-1].close) * 0.01, 0.01)
             for pattern_group in self._group_patterns(latest_patterns, risk_unit):
                 representative = max(
@@ -129,17 +133,19 @@ class RuleBasedAnalysisEngine:
         if directional_gap < 12 or max(totals[Direction.UP], totals[Direction.DOWN]) < 20:
             direction = Direction.FLAT
             if directional_gap < 12:
-                factors += (AnalysisFactor(
-                    "balanced_evidence", "方向感の拮抗", Direction.FLAT, 20,
-                    "上昇要因と下落要因が拮抗しており、"
-                    "明確な方向を判定できません",
-                ),)
+                factors += (
+                    AnalysisFactor(
+                        "balanced_evidence",
+                        "方向感の拮抗",
+                        Direction.FLAT,
+                        20,
+                        "上昇要因と下落要因が拮抗しており、明確な方向を判定できません",
+                    ),
+                )
                 totals[Direction.FLAT] += 20
         else:
             direction = (
-                Direction.UP
-                if totals[Direction.UP] > totals[Direction.DOWN]
-                else Direction.DOWN
+                Direction.UP if totals[Direction.UP] > totals[Direction.DOWN] else Direction.DOWN
             )
 
         analysis_context = context or AnalysisContext(
@@ -156,9 +162,7 @@ class RuleBasedAnalysisEngine:
             horizon_days,
         )
         position_entry = (
-            self.position_entry_evaluator.evaluate(ordered)
-            if horizon_days == 20
-            else None
+            self.position_entry_evaluator.evaluate(ordered) if horizon_days == 20 else None
         )
         checks = self.decision_policy.equity_checks(
             ordered, patterns, analysis_context, horizon_days
@@ -174,10 +178,14 @@ class RuleBasedAnalysisEngine:
             horizon_days,
         )
         return AnalysisResult(
-            symbol=symbol.upper(), as_of_date=as_of_date, horizon_days=horizon_days,
-            direction=direction, scores=scores,
+            symbol=symbol.upper(),
+            as_of_date=as_of_date,
+            horizon_days=horizon_days,
+            direction=direction,
+            scores=scores,
             factors=tuple(sorted(factors, key=lambda item: item.score, reverse=True)),
-            engine_id=self.engine_id, engine_version=self.version,
+            engine_id=self.engine_id,
+            engine_version=self.version,
             patterns=patterns,
             pattern_lifecycles=pattern_lifecycles,
             transition_readiness=transition_readiness,
@@ -201,8 +209,7 @@ class RuleBasedAnalysisEngine:
                     for group in groups
                     if group[0].detected_at == pattern.detected_at
                     and group[0].direction is pattern.direction
-                    and abs(group[0].breakout_level - pattern.breakout_level)
-                    <= tolerance
+                    and abs(group[0].breakout_level - pattern.breakout_level) <= tolerance
                 ),
                 None,
             )

@@ -18,17 +18,55 @@ Pythonパッケージ名、CLIコマンドは引き続き`stock-signal`を使用
 「様子見」「新規購入回避」へ分類します。表示する判定スコアとパターン一致度は将来の
 確率ではありません。
 
-## 初期設定
+## 初期設定と日常操作
 
-Docker DesktopとDocker Composeが必要です。設定を変更する場合だけ、`.env.example`を
-`.env`へコピーしてください。`.env`はGitへ登録しません。
+Docker Desktop（Docker Composeを含む）とmakeが必要です。アプリの実行・品質検査は
+すべてDocker Compose内で行います。引数なしの`make`で日本語のコマンド一覧を表示します。
+
+既存環境は`make start`で起動できます。初めて設定する場合は次の順で実行してください。
 
 ```bash
-cp .env.example .env
-docker compose build app
-docker compose up -d db
-docker compose run --rm migrate
+make setup
+# .envを編集して取得元とAPIキーを設定する（秘密情報はGitへ登録しない）
+make start
+make update
 ```
+
+`make setup`は既存の`.env`を上書きしません。J-Quantsを使う場合は
+`MARKET_DATA_PROVIDER=jquants`、`JQUANTS_PLAN=light`、`JQUANTS_API_KEY`を設定します。
+既に動作している環境のDB接続設定をサンプル値で上書きしないでください。
+
+| やりたいこと | コマンド |
+|---|---|
+| 起動・コードや設定変更を反映 | `make start` |
+| 日足・財務・分析候補の日次更新 | `make update` |
+| ウォッチ・保有の財務だけ更新 | `make financials` |
+| 特定銘柄の財務だけ更新 | `make financials SYMBOLS="7203 8058"` |
+| 寄り付き前の市場環境更新 | `make preopen` |
+| 状態・異常を確認 | `make status`、`make logs` |
+| 画面ログを見る | `make logs SERVICE=frontend` |
+| 画面・APIのコード再読込 | `make restart` |
+| 画面・API・DBを停止 | `make stop` |
+| 全品質検査 | `make check` |
+
+画面は **http://localhost:3000** です。`make start`はイメージのビルド、画面の依存関係同期、
+DBの起動・マイグレーション、API・画面の再作成を順に実行してバックグラウンド起動します。
+初回はビルドと画面コンパイルに時間がかかります。起動では市場データを取得しません。
+
+`make update`は完了まで待機し、失敗・一部失敗時は非ゼロで終了します。成功後は画面を
+再読み込みしてください。APIを再起動せず最新データを参照できます。`make financials`は
+財務同期のみで、市場一覧の再生成には`make update`が必要です。
+`make preopen`は別途Alpha Vantageの設定を必要とするため、日次更新とは分離しています。
+全市場の長期履歴を初回投入する場合だけ`make bootstrap`を実行し、その後`make update`を実行します。
+
+`make stop`はデータボリュームを削除しません。実行中のデータ更新・検査が完了してから停止してください。
+`make logs`のCtrl+Cはログ表示だけを終了します。`make restart`は既存のAPI・画面を再起動するだけです。
+DBも停止している場合や依存関係・`.env`を変更した場合は`make start`を使ってください。
+
+開発用には`make build`、`make migrate`、`make test`、`make lint`、`make frontend-check`も用意しています。
+`make check`はpytest → ruff → TypeScript → ESLintの順に実行し、途中で失敗した場合は停止します。
+makeの並列指定でもDB関連操作は直列実行します。任意のCLI引数や期間指定が必要な場合は、
+以降のDocker Composeコマンドを直接使用できます。
 
 `app`、`migrate`、`batch`、`api`、`test`は同じ`tomoshibiyori:local`イメージを使い、
 `frontend`はNext.js専用イメージを使います。依存関係を変更した場合は、対応するイメージを
@@ -45,7 +83,7 @@ docker compose run --rm migrate
 ローカルでは次のコマンドでPostgreSQL、マイグレーション、分析API、フロントエンドを起動します。
 
 ```bash
-docker compose up --build frontend
+make start
 ```
 
 ブラウザで`http://localhost:3000`を開きます。初期値ではローカル開発時だけ本人認証を省略します。
@@ -61,6 +99,7 @@ JSON APIに専念し、画面はNext.jsだけを使用します。`api`と`front
 画面では次を確認できます。
 
 - 保有銘柄と、保有情報から独立したウォッチリスト
+- 楽天証券の「資産残高（すべて）」CSVによる国内株式の保有一括登録
 - 同期済み銘柄マスタから最大200件をまとめてウォッチリストへ追加
 - 流動性上位銘柄を対象とする市場全体の分析候補
 - 1か月、3か月、6か月、1年、全期間の日足
@@ -82,7 +121,7 @@ JSON APIに専念し、画面はNext.jsだけを使用します。`api`と`front
 - パターン発生後の新規検討期間、勢い弱化、目標、無効化、期限切れ
 - 底固め、転換準備、「あと1条件」、転換初動を示す条件進捗
 - 転換水準、未達条件、参考目標、無効化水準、参考リスクリワード
-- 許容損失額から計算する理論上限株数と100株単位の上限
+- Light財務サマリーによる業績・評価倍率の確認と、資金・銘柄／業種集中・売買コストを反映する上限株数
 - TOPIXに対する20日・60日の相対力と単回帰ベータ
 - ブレイク時の出来高倍率、ブレイク幅、窓開け
 - 最新日足のデータ鮮度（7暦日を超える場合は購入候補を抑制）
@@ -105,7 +144,7 @@ JSON APIに専念し、画面はNext.jsだけを使用します。`api`と`front
 なく、長期保有を開始する前の中期的な買い場確認です。上抜けを追うスイング判定とは分離し、
 20日線・60日線の関係と長期線の傾きで中期トレンドを確認した後、20日線、60日線、直近20日安値、
 上抜け後の旧抵抗帯への接触、終値での維持、反発日足を順に確認します。支持帯への接触だけでは
-購入候補にしません。企業価値や業績は別途確認してください。
+購入候補にしません。さらに財務数値の確認を必須にします。事業価値の評価は限定的です。
 
 チャートでは、スイング選択時に5日・20日移動平均とRSI 14日、過去60営業日の抵抗帯候補を、
 中長期選択時に20日・60日移動平均とRSI 28日、過去120営業日の抵抗帯候補に加え、
@@ -151,6 +190,30 @@ APIが`incomplete`を返した場合、途中の文章を完成回答として�
 画面に再実行または上限変更を案内します。必要な場合だけ`OPENAI_MAX_OUTPUT_TOKENS`を
 2,000〜20,000の範囲で変更してください。回答プロンプト自体も日本語2,000文字程度を目安にし、
 不必要に長い出力と利用料金を抑えます。
+
+### 楽天証券CSVから保有銘柄を登録する
+
+楽天証券で手動ダウンロードした「資産残高（すべて）」CSVを、銘柄ナビゲーションの
+「保有」→「楽天証券CSVから取り込む」から登録できます。CSVはCP932（Shift_JIS系）とUTF-8に
+対応し、2MB・保有商品詳細5,000行を上限とします。
+
+1. CSVを選択して「内容を確認」を押す。
+2. 登録・更新、対象外、要確認の件数と銘柄を確認する。
+3. 「銘柄を登録・更新」を押して確定する。
+
+TOMOSHIBIYORIが分析対象とする国内株式だけを登録します。米国株式、投資信託などは種類別の
+件数を表示して除外します。4文字の証券コードが銘柄マスタにない場合は推測で登録せず、日次更新で
+銘柄マスタを同期してから再度確認してください。
+
+同じ証券コードが特定口座とNISAなど複数行に分かれている場合、保有数量を合算し、平均取得価額を
+数量加重平均して1銘柄にまとめます。同じコードを再度取り込むと数量、平均取得価額、口座区分を
+上書きするため、同じCSVを再実行しても二重加算されません。CSVにない既存保有は自動削除しない
+安全なマージ方式です。不要な保有銘柄は一覧の削除ボタンから明示的に削除してください。
+CSVの現在値・時価評価額は取り込まず、価格は従来どおりJ-Quantsの調整済み日足を正とします。
+
+元CSVには資産残高などの個人情報が含まれるため、APIは取込処理後にファイル自体を保存しません。
+ブラウザーから本人認証済みBFFを経由し、FastAPIのBearer認証付きAPIへ送信します。プレビューは
+DBを変更せず、確定時だけ対象銘柄を一つのトランザクションで登録・更新します。
 
 ## CLI
 
@@ -551,6 +614,8 @@ GET /api/v1/instruments?query=トヨタ
 GET /api/v1/portfolio/positions
 POST /api/v1/portfolio/positions
 DELETE /api/v1/portfolio/positions/{symbol}?provider=jquants
+POST /api/v1/portfolio/imports/rakuten/preview  （CSV本体、Content-Type: text/csv）
+POST /api/v1/portfolio/imports/rakuten/apply    （CSV本体、Content-Type: text/csv）
 GET /api/v1/market-candidates?action=buy_candidate&horizon=5
 GET /api/v1/watchlist/registrations
 POST /api/v1/watchlist/registrations  {"symbol":"7203"}
@@ -585,3 +650,34 @@ TOPIXと決算予定日は評価し、対象外の業種指数と未契約の適
 投資助言や利益保証ではありません。
 自動取引へ進む前に、ウォークフォワード検証、確率校正、取引コスト、リスク制限、
 ペーパートレード、注文照合を実装する必要があります。
+
+
+## Light財務・保有リスク（2026年9月追加）
+
+[詳細仕様と実装点検結果](docs/light-research-design.md)を参照してください。
+Lightを維持し、ウォッチ・保有銘柄の財務履歴を日次バッチで同期します。
+日次処理時間は銘柄数とAPIのレート制限により増えます。
+財務だけの初回同期・再同期は次のコマンドで実行できます。
+
+```bash
+docker compose run --rm migrate
+docker compose run --rm app stock-signal financial-sync
+# 指定銘柄だけ同期する場合
+docker compose run --rm app stock-signal financial-sync 7203 8058
+```
+
+画面の「企業・イベント・保有リスク」から資金設定を登録してください。
+資金・許容損失の架空の初期値はありません。未設定時は上限株数を表示しません。
+設定変更後の市場一覧は旧候補を保留し、銘柄を選択すると最新条件で再分析します。
+財務未同期の市場銘柄は中長期の購入候補に昇格しません。
+
+APIは `GET/PUT /api/v1/portfolio/risk-settings`、銘柄分析の `research` を追加しています。
+財務・資金ルールは確率ではありません。EDINET本文や追加の公的マクロAPIは未実装です。
+
+### 購入候補の監査と財務同期
+
+`make update`は市場のテクニカル条件を先に評価し、通過した銘柄のLight財務を自動取得して最終区分を更新します。一覧でテクニカル通過・購入候補・財務確認待ち・リスク保留の件数を確認できます。ゼロ件でも条件未達なら正常ですが、確認待ちはデータの不足・不整合を解消する必要があります。詳細は[判断ロジックの監査](docs/decision-audit-20260906.md)を参照してください。
+
+RSIダイバージェンスの条件追加は、`make rsi-study`で保存日足から比較できます。現時点では収益改善を裏付ける結果が得られていないため、購入区分には反映していません。[検証条件と結果](docs/rsi-divergence-study.md)を参照してください。
+
+強気逆行を起点とする反転監視は、`make rsi-watch-study`で検証できます。監視開始・安値更新による失効・戻り高値超えによる反転確認を分けた研究用実装です。ライブ購入判定には未接続です。[検討結果](docs/divergence-watch-study.md)を参照してください。

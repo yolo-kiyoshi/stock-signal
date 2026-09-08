@@ -55,31 +55,35 @@ def make_rectangle_breakout(
     start = bars[-1].trade_date + timedelta(days=1)
     for index in range(30):
         close = 101 if index % 4 < 2 else 99
-        bars.append(DailyBar(
-            symbol="TEST",
-            trade_date=start + timedelta(days=index),
-            open=Decimal(str(close)),
-            high=Decimal(str(close + 1)),
-            low=Decimal(str(close - 1)),
-            close=Decimal(str(close)),
-            volume=1000,
-            provider="test",
-            is_adjusted=False,
-        ))
+        bars.append(
+            DailyBar(
+                symbol="TEST",
+                trade_date=start + timedelta(days=index),
+                open=Decimal(str(close)),
+                high=Decimal(str(close + 1)),
+                low=Decimal(str(close - 1)),
+                close=Decimal(str(close)),
+                volume=1000,
+                provider="test",
+                is_adjusted=False,
+            )
+        )
     close = 103 if direction is Direction.UP else 97
     normal_open = 101 if direction is Direction.UP else 99
     opening = (108 if direction is Direction.UP else 92) if gap_driven else normal_open
-    bars.append(DailyBar(
-        symbol="TEST",
-        trade_date=start + timedelta(days=30),
-        open=Decimal(str(opening)),
-        high=Decimal(str(max(opening, close) + 1)),
-        low=Decimal(str(min(opening, close) - 1)),
-        close=Decimal(str(close)),
-        volume=volume,
-        provider="test",
-        is_adjusted=False,
-    ))
+    bars.append(
+        DailyBar(
+            symbol="TEST",
+            trade_date=start + timedelta(days=30),
+            open=Decimal(str(opening)),
+            high=Decimal(str(max(opening, close) + 1)),
+            low=Decimal(str(min(opening, close) - 1)),
+            close=Decimal(str(close)),
+            volume=volume,
+            provider="test",
+            is_adjusted=False,
+        )
+    )
     return bars
 
 
@@ -126,10 +130,9 @@ def test_wilder_rsi_handles_rise_fall_and_no_change() -> None:
 
 def test_resistance_band_requires_repeated_local_highs() -> None:
     peak_indexes = {25, 35, 45}
-    bars = make_custom_bars([
-        (100, 110 if index in peak_indexes else 101, 99, 100, 1_000)
-        for index in range(55)
-    ])
+    bars = make_custom_bars(
+        [(100, 110 if index in peak_indexes else 101, 99, 100, 1_000) for index in range(55)]
+    )
 
     bands = resistance_bands(bars, lookback=40)
 
@@ -141,10 +144,7 @@ def test_resistance_band_requires_repeated_local_highs() -> None:
 
 def test_resistance_band_is_removed_after_clear_close_breakout() -> None:
     peak_indexes = {25, 35, 45}
-    rows = [
-        (100, 110 if index in peak_indexes else 101, 99, 100, 1_000)
-        for index in range(55)
-    ]
+    rows = [(100, 110 if index in peak_indexes else 101, 99, 100, 1_000) for index in range(55)]
     rows[-1] = (114, 116, 113, 115, 2_000)
 
     assert resistance_bands(make_custom_bars(rows), lookback=40) == ()
@@ -219,10 +219,7 @@ def test_position_style_distinguishes_pullback_from_chasing_uptrend() -> None:
 
     assert result.position_entry is not None
     assert result.position_entry.phase is PositionEntryPhase.PULLBACK_CANDIDATE
-    assert any(
-        support.touched and support.held
-        for support in result.position_entry.supports
-    )
+    assert any(support.touched and support.held for support in result.position_entry.supports)
     assert result.investment_decision is not None
     assert result.investment_decision.action is InvestmentAction.WATCH
     assert result.investment_decision.entry_stage.value == "conditional_entry"
@@ -266,9 +263,7 @@ def test_engine_can_receive_replacement_rules() -> None:
         def evaluate(self, bars, horizon_days):
             from stock_signal.domain.analysis import AnalysisFactor
 
-            return AnalysisFactor(
-                self.rule_id, "テスト規則", Direction.DOWN, 50, "下落要因です"
-            )
+            return AnalysisFactor(self.rule_id, "テスト規則", Direction.DOWN, 50, "下落要因です")
 
     result = RuleBasedAnalysisEngine(rules=(AlwaysDownRule(),)).analyze(
         "TEST", make_bars([100] * 30), 5
@@ -299,17 +294,19 @@ def test_breakout_levels_keep_the_breakout_day_atr() -> None:
     bars = make_rectangle_breakout(direction=Direction.UP)
     initial = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
     latest = bars[-1]
-    bars.append(DailyBar(
-        symbol=latest.symbol,
-        trade_date=latest.trade_date + timedelta(days=1),
-        open=Decimal("104"),
-        high=Decimal("150"),
-        low=Decimal("50"),
-        close=Decimal("104"),
-        volume=1000,
-        provider=latest.provider,
-        is_adjusted=latest.is_adjusted,
-    ))
+    bars.append(
+        DailyBar(
+            symbol=latest.symbol,
+            trade_date=latest.trade_date + timedelta(days=1),
+            open=Decimal("104"),
+            high=Decimal("150"),
+            low=Decimal("50"),
+            close=Decimal("104"),
+            volume=1000,
+            provider=latest.provider,
+            is_adjusted=latest.is_adjusted,
+        )
+    )
 
     after_volatility = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
 
@@ -325,17 +322,19 @@ def test_extended_breakout_is_removed_from_new_buy_candidates() -> None:
     bars = make_rectangle_breakout(direction=Direction.UP)
     start = bars[-1].trade_date
     for offset, close in enumerate((103.5, 104.0, 104.5, 105.0), start=1):
-        bars.append(DailyBar(
-            symbol="TEST",
-            trade_date=start + timedelta(days=offset),
-            open=Decimal(str(close - 0.2)),
-            high=Decimal(str(close + 0.5)),
-            low=Decimal(str(close - 0.5)),
-            close=Decimal(str(close)),
-            volume=1000,
-            provider="test",
-            is_adjusted=False,
-        ))
+        bars.append(
+            DailyBar(
+                symbol="TEST",
+                trade_date=start + timedelta(days=offset),
+                open=Decimal(str(close - 0.2)),
+                high=Decimal(str(close + 0.5)),
+                low=Decimal(str(close - 0.5)),
+                close=Decimal(str(close)),
+                volume=1000,
+                provider="test",
+                is_adjusted=False,
+            )
+        )
 
     result = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
 
@@ -359,17 +358,19 @@ def test_breakout_is_an_event_and_recent_reversal_weakens_signal() -> None:
     bars = make_rectangle_breakout(direction=Direction.UP)
     start = bars[-1].trade_date
     for offset, close in enumerate((104.2, 103.7, 103.2, 102.8), start=1):
-        bars.append(DailyBar(
-            symbol="TEST",
-            trade_date=start + timedelta(days=offset),
-            open=Decimal(str(close + 0.2)),
-            high=Decimal(str(close + 1)),
-            low=Decimal(str(close - 1)),
-            close=Decimal(str(close)),
-            volume=1000,
-            provider="test",
-            is_adjusted=False,
-        ))
+        bars.append(
+            DailyBar(
+                symbol="TEST",
+                trade_date=start + timedelta(days=offset),
+                open=Decimal(str(close + 0.2)),
+                high=Decimal(str(close + 1)),
+                low=Decimal(str(close - 1)),
+                close=Decimal(str(close)),
+                volume=1000,
+                provider="test",
+                is_adjusted=False,
+            )
+        )
 
     result = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
 
@@ -388,17 +389,19 @@ def test_old_pattern_expires_and_is_not_reused_for_new_entry() -> None:
     start = bars[-1].trade_date
     for offset in range(1, 22):
         close = 104.0 + (offset % 2) * 0.1
-        bars.append(DailyBar(
-            symbol="TEST",
-            trade_date=start + timedelta(days=offset),
-            open=Decimal(str(close)),
-            high=Decimal(str(close + 0.5)),
-            low=Decimal(str(close - 0.5)),
-            close=Decimal(str(close)),
-            volume=1000,
-            provider="test",
-            is_adjusted=False,
-        ))
+        bars.append(
+            DailyBar(
+                symbol="TEST",
+                trade_date=start + timedelta(days=offset),
+                open=Decimal(str(close)),
+                high=Decimal(str(close + 0.5)),
+                low=Decimal(str(close - 0.5)),
+                close=Decimal(str(close)),
+                volume=1000,
+                provider="test",
+                is_adjusted=False,
+            )
+        )
 
     result = RuleBasedAnalysisEngine().analyze("TEST", bars, 5)
 
@@ -591,9 +594,7 @@ def test_position_style_only_warns_about_earnings_more_than_five_days_away() -> 
     )
 
     result = RuleBasedAnalysisEngine().analyze("TEST", bars, 20, context)
-    earnings = next(
-        check for check in result.equity_checks if check.key == "days_to_earnings"
-    )
+    earnings = next(check for check in result.equity_checks if check.key == "days_to_earnings")
 
     assert earnings.status.value == "partial"
     assert "警告表示にとどめます" in earnings.description
@@ -641,8 +642,35 @@ def test_mvp_pattern_families_are_detected_by_objective_shapes() -> None:
     )
 
     double_values = [
-        100, 99, 98, 96, 94, 92, 94, 97, 100, 102, 101, 100, 99, 98, 97,
-        96, 94, 92.5, 94, 97, 100, 102, 101, 100, 99, 100, 101, 102, 103,
+        100,
+        99,
+        98,
+        96,
+        94,
+        92,
+        94,
+        97,
+        100,
+        102,
+        101,
+        100,
+        99,
+        98,
+        97,
+        96,
+        94,
+        92.5,
+        94,
+        97,
+        100,
+        102,
+        101,
+        100,
+        99,
+        100,
+        101,
+        102,
+        103,
         103,
     ]
     double_rows = [(value, value + 1, value - 1, value, 1000) for value in double_values]
@@ -651,36 +679,86 @@ def test_mvp_pattern_families_are_detected_by_objective_shapes() -> None:
     )
 
     head_values = [
-        90, 92, 94, 96, 99, 102, 99, 96, 94, 96, 100, 104, 108, 104, 100,
-        96, 95, 97, 100, 102, 99, 98, 97, 96, 96, 96, 96, 96, 96, 96,
+        90,
+        92,
+        94,
+        96,
+        99,
+        102,
+        99,
+        96,
+        94,
+        96,
+        100,
+        104,
+        108,
+        104,
+        100,
+        96,
+        95,
+        97,
+        100,
+        102,
+        99,
+        98,
+        97,
+        96,
+        96,
+        96,
+        96,
+        96,
+        96,
+        96,
     ]
     head_rows = [(value, value + 1, value - 1, value, 1000) for value in head_values]
     head_patterns = TechnicalPatternDetector().detect(
-        make_custom_bars([*base, *head_rows, (91, 92, 87, 89, 2000)])
+        make_custom_bars(
+            [
+                *[
+                    (80 + i * 0.25, 81 + i * 0.25, 79 + i * 0.25, 80 + i * 0.25, 1000)
+                    for i in range(40)
+                ],
+                *head_rows[:23],
+                (97, 98, 92, 93, 2000),
+            ]
+        )
     )
 
     assert any(
-        pattern.pattern_type is PatternType.ASCENDING_TRIANGLE
-        for pattern in triangle_patterns
+        pattern.pattern_type is PatternType.ASCENDING_TRIANGLE for pattern in triangle_patterns
     )
+    assert any(pattern.pattern_type is PatternType.DOUBLE_BOTTOM for pattern in double_patterns)
     assert any(
-        pattern.pattern_type is PatternType.DOUBLE_BOTTOM for pattern in double_patterns
-    )
-    assert any(
-        pattern.pattern_type is PatternType.HEAD_AND_SHOULDERS_TOP
-        for pattern in head_patterns
+        pattern.pattern_type is PatternType.HEAD_AND_SHOULDERS_TOP for pattern in head_patterns
     )
 
 
 def test_short_w_shape_is_not_classified_as_daily_double_bottom() -> None:
     declining_base = [
-        (120 - index * 0.5, 121 - index * 0.5, 119 - index * 0.5,
-         120 - index * 0.5, 1000)
+        (120 - index * 0.5, 121 - index * 0.5, 119 - index * 0.5, 120 - index * 0.5, 1000)
         for index in range(40)
     ]
     short_w = [
-        100, 98, 96, 94, 92, 94, 97, 101, 103, 101, 98, 95, 92.5, 94,
-        98, 101, 103, 102, 102, 102,
+        100,
+        98,
+        96,
+        94,
+        92,
+        94,
+        97,
+        101,
+        103,
+        101,
+        98,
+        95,
+        92.5,
+        94,
+        98,
+        101,
+        103,
+        102,
+        102,
+        102,
     ]
     rows = [
         *declining_base,
@@ -690,21 +768,44 @@ def test_short_w_shape_is_not_classified_as_daily_double_bottom() -> None:
 
     patterns = TechnicalPatternDetector().detect(make_custom_bars(rows))
 
-    assert all(
-        pattern.pattern_type is not PatternType.DOUBLE_BOTTOM
-        for pattern in patterns
-    )
+    assert all(pattern.pattern_type is not PatternType.DOUBLE_BOTTOM for pattern in patterns)
 
 
 def test_w_shape_during_prior_uptrend_is_not_a_double_bottom_reversal() -> None:
     rising_base = [
-        (80 + index * 0.5, 81 + index * 0.5, 79 + index * 0.5,
-         80 + index * 0.5, 1000)
+        (80 + index * 0.5, 81 + index * 0.5, 79 + index * 0.5, 80 + index * 0.5, 1000)
         for index in range(40)
     ]
     long_w = [
-        100, 99, 98, 96, 94, 92, 94, 97, 100, 102, 101, 100, 99, 98, 97,
-        96, 94, 92.5, 94, 97, 100, 102, 101, 100, 99, 100, 101, 102, 103,
+        100,
+        99,
+        98,
+        96,
+        94,
+        92,
+        94,
+        97,
+        100,
+        102,
+        101,
+        100,
+        99,
+        98,
+        97,
+        96,
+        94,
+        92.5,
+        94,
+        97,
+        100,
+        102,
+        101,
+        100,
+        99,
+        100,
+        101,
+        102,
+        103,
         103,
     ]
     rows = [
@@ -715,7 +816,4 @@ def test_w_shape_during_prior_uptrend_is_not_a_double_bottom_reversal() -> None:
 
     patterns = TechnicalPatternDetector().detect(make_custom_bars(rows))
 
-    assert all(
-        pattern.pattern_type is not PatternType.DOUBLE_BOTTOM
-        for pattern in patterns
-    )
+    assert all(pattern.pattern_type is not PatternType.DOUBLE_BOTTOM for pattern in patterns)

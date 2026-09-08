@@ -27,6 +27,7 @@ from stock_signal.config import Settings
 from stock_signal.database import (
     add_watchlist_item,
     bulk_sync_status,
+    bulk_upsert_positions,
     data_sync_succeeded,
     get_instruments_by_symbols,
     latest_bulk_file_date,
@@ -43,6 +44,11 @@ from stock_signal.database import (
     request_watchlist_registration,
     search_instruments,
     upsert_position,
+)
+from stock_signal.importers.rakuten import (
+    RakutenCsvError,
+    RakutenCsvResult,
+    parse_rakuten_asset_balance,
 )
 from stock_signal.market_environment import market_regime_as_dict
 from stock_signal.persistence.engine import check_database
@@ -63,7 +69,7 @@ app = FastAPI(
     description=(
         "保有銘柄、ウォッチリスト、市場全体候補の日足と分析情報を確認するアプリケーション"
     ),
-    version="0.9.0",
+    version="0.10.0",
     lifespan=lifespan,
 )
 
@@ -276,6 +282,7 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
         }
 
     return {
+        "research": result.research,
         "symbol": result.symbol,
         "display_name": display_name,
         "as_of_date": result.as_of_date,
@@ -625,6 +632,121 @@ def portfolio_positions() -> dict[str, object]:
             for item in items
         ]
     }
+
+
+def _prepare_rakuten_import(parsed: RakutenCsvResult) -> tuple[dict[str, object], list[dict]]:
+    matches = get_instruments_by_symbols(
+        settings.database_url,
+        [position.symbol for position in parsed.positions],
+    )
+    matched_by_symbol = {item.symbol: item for item in matches}
+    preview_items: list[dict[str, object]] = []
+    records: list[dict] = []
+    for position in parsed.positions:
+        instrument = matched_by_symbol.get(position.symbol)
+        ready = instrument is not None
+        preview_items.append(
+            {
+                "symbol": position.symbol,
+                "display_name": (
+                    instrument.display_name if instrument is not None else position.display_name
+                ),
+                "csv_display_name": position.display_name,
+                "quantity": str(position.quantity),
+                "average_cost": (
+                    str(position.average_cost) if position.average_cost is not None else None
+                ),
+                "account_type": position.account_type,
+                "source_rows": position.source_rows,
+                "status": "ready" if ready else "master_missing",
+                "message": (
+                    "登録・更新できます"
+                    if ready
+                    else "銘柄マスタにありません。日次更新後に再確認してください"
+                ),
+            }
+        )
+        if instrument is not None:
+            records.append(
+                {
+                    "symbol": instrument.symbol,
+                    "provider": instrument.provider,
+                    "display_name": instrument.display_name,
+                    "quantity": position.quantity,
+                    "average_cost": position.average_cost,
+                    "account_type": position.account_type,
+                }
+            )
+
+    ignored_rows = sum(parsed.skipped_types.values())
+    summary = {
+        "detail_rows": parsed.detail_rows,
+        "domestic_rows": parsed.domestic_rows,
+        "parsed_symbols": len(parsed.positions),
+        "importable_symbols": len(records),
+        "unmatched_symbols": len(parsed.positions) - len(records),
+        "invalid_domestic_rows": len(parsed.issues),
+        "ignored_rows": ignored_rows,
+        "duplicate_rows": parsed.duplicate_rows,
+    }
+    response = {
+        "status": "ready",
+        "source": "rakuten_asset_balance",
+        "encoding": parsed.encoding,
+        "summary": summary,
+        "positions": preview_items,
+        "issues": [
+            {
+                "row_number": issue.row_number,
+                "symbol": issue.symbol,
+                "message": issue.message,
+            }
+            for issue in parsed.issues
+        ],
+        "skipped_types": parsed.skipped_types,
+        "notices": [
+            "国内株式だけを取り込み、米国株式・投資信託などは対象外とします。",
+            "同一証券コードの複数口座は数量を合算し、平均取得単価を数量加重平均します。",
+            "同じ証券コードは上書きしますが、CSVにない既存の保有銘柄は削除しません。",
+            "アップロードしたCSVファイル自体は保存しません。",
+        ],
+    }
+    return response, records
+
+
+async def _parse_rakuten_request(request: Request) -> RakutenCsvResult:
+    try:
+        return parse_rakuten_asset_balance(await request.body())
+    except RakutenCsvError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/v1/portfolio/imports/rakuten/preview")
+async def preview_rakuten_positions(request: Request) -> dict[str, object]:
+    """楽天証券CSVを保存せず、登録対象と除外理由を返す。"""
+    parsed = await _parse_rakuten_request(request)
+    preview, _ = _prepare_rakuten_import(parsed)
+    return preview
+
+
+@app.post("/api/v1/portfolio/imports/rakuten/apply")
+async def apply_rakuten_positions(request: Request) -> dict[str, object]:
+    """プレビューと同じ規則で国内株式を冪等に登録・更新する。"""
+    parsed = await _parse_rakuten_request(request)
+    preview, records = _prepare_rakuten_import(parsed)
+    if not records:
+        raise HTTPException(
+            status_code=422,
+            detail="登録できる国内株式がありません。銘柄マスタとCSVを確認してください",
+        )
+    saved = bulk_upsert_positions(settings.database_url, records)
+    preview["status"] = "saved"
+    preview["saved_symbols"] = saved
+    preview["message"] = (
+        f"国内株式{saved}銘柄を登録・更新しました。"
+        "CSVにない既存の保有銘柄は維持しています"
+    )
+    return preview
 
 
 @app.post("/api/v1/portfolio/positions")
@@ -1021,6 +1143,7 @@ def create_ai_investment_review(
             "patterns",
             "equity_checks",
             "transition_readiness",
+            "research",
             "position_entry",
             "investment_decision",
             "engine",
@@ -1122,3 +1245,25 @@ def reference_signals(
         "notice": "互換用APIです。判定スコアは将来の確率ではありません",
         "items": [_serialize_analysis(result, name) for name, result in analyses],
     }
+
+
+@app.get("/api/v1/portfolio/risk-settings")
+def portfolio_risk_settings_api() -> dict:
+    """資金設定の未登録を区別して返す。"""
+    from stock_signal.research_store import load_risk_settings
+
+    return {"settings": load_risk_settings(settings.database_url)}
+
+
+@app.put("/api/v1/portfolio/risk-settings")
+async def update_portfolio_risk_settings(request: Request) -> dict:
+    """資金制約を検証して保存する。"""
+    from stock_signal.portfolio_risk import validate_risk_settings
+    from stock_signal.research_store import save_risk_settings
+
+    try:
+        payload = validate_risk_settings(await request.json())
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    save_risk_settings(settings.database_url, payload)
+    return {"settings": payload}

@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { FormEvent } from "react";
 
+import { ResearchPanel } from "@/components/research-panel";
 import { PriceChart } from "@/components/price-chart";
 import type {
   AiReviewResponse,
@@ -12,12 +13,14 @@ import type {
   DailyBarsResponse,
   InstrumentListItem,
   MarketCandidate,
+  PositionItem,
+  RakutenImportResponse,
 } from "@/types/api";
 
 type Tab = "positions" | "watchlist" | "candidates";
 type CandidateAction = "all" | MarketCandidate["action"];
 type ChartRange = "1m" | "3m" | "6m" | "1y" | "all";
-type NavItem = InstrumentListItem & Partial<MarketCandidate>;
+type NavItem = InstrumentListItem & Partial<MarketCandidate> & Partial<PositionItem>;
 type ListFilters = {
   market: string;
   instrumentType: string;
@@ -140,6 +143,7 @@ function parseSymbols(value: string): string[] {
 
 export function DashboardShell({ data }: { data: DashboardData }) {
   const router = useRouter();
+  const [refreshing, startRefresh] = useTransition();
   const mainPanelRef = useRef<HTMLElement>(null);
   const preservedScrollTopRef = useRef<number | null>(null);
   const firstInstrument = initialInstrument(data);
@@ -170,7 +174,10 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const [positionSymbol, setPositionSymbol] = useState("");
   const [positionQuantity, setPositionQuantity] = useState("");
   const [positionCost, setPositionCost] = useState("");
-  const [riskAmount, setRiskAmount] = useState("50000");
+  const rakutenFileInputRef = useRef<HTMLInputElement>(null);
+  const [rakutenFile, setRakutenFile] = useState<File | null>(null);
+  const [rakutenPreview, setRakutenPreview] = useState<RakutenImportResponse | null>(null);
+  const [rakutenLoading, setRakutenLoading] = useState(false);
   const [aiReview, setAiReview] = useState<AiReviewResponse | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -184,12 +191,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     : tab === "watchlist"
       ? data.watchlist
       : actionFilteredCandidates;
+  const filterSource = tab === "candidates" ? candidateItems : activeItems;
   const filterOptions = useMemo(() => ({
-    markets: uniqueValues(activeItems, (item) => item.market),
-    instrumentTypes: uniqueValues(activeItems, (item) => item.instrument_type),
-    sectors17: uniqueValues(activeItems, (item) => item.sector_17_name),
-    sectors33: uniqueValues(activeItems, (item) => item.sector_33_name),
-  }), [activeItems]);
+    markets: uniqueValues(filterSource, (item) => item.market),
+    instrumentTypes: uniqueValues(filterSource, (item) => item.instrument_type),
+    sectors17: uniqueValues(filterSource, (item) => item.sector_17_name),
+    sectors33: uniqueValues(filterSource, (item) => item.sector_33_name),
+  }), [filterSource]);
   const filteredItems = useMemo(() => {
     const normalizedQuery = normalize(query);
     return activeItems.filter((item) => {
@@ -216,6 +224,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     });
   }, [activeItems, listFilters, query]);
   const activeFilterCount = Object.values(listFilters).filter((value) => value !== "all").length;
+  const hasListConstraints = activeFilterCount > 0 || query.trim().length > 0
+    || (tab === "candidates" && candidateAction !== "all");
+  function clearListConstraints() {
+    setQuery("");
+    setListFilters(defaultListFilters);
+    setCandidateAction("all");
+  }
   const watchedSymbols = useMemo(
     () => new Set(data.watchlist.map((item) => `${item.provider}:${item.symbol}`)),
     [data.watchlist],
@@ -392,6 +407,61 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     }
   }
 
+  function selectRakutenFile(file: File | null): void {
+    setRakutenPreview(null);
+    setSidebarMessage(null);
+    if (file && file.size > 2 * 1024 * 1024) {
+      setRakutenFile(null);
+      setSidebarMessage("CSVファイルは2MB以下にしてください");
+      if (rakutenFileInputRef.current) rakutenFileInputRef.current.value = "";
+      return;
+    }
+    setRakutenFile(file);
+  }
+
+  async function previewRakutenImport(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!rakutenFile) {
+      setSidebarMessage("楽天証券からダウンロードしたCSVを選択してください");
+      return;
+    }
+    setRakutenLoading(true);
+    setSidebarMessage(null);
+    try {
+      const result = await apiJson<RakutenImportResponse>(
+        "/api/v1/portfolio/imports/rakuten/preview",
+        { method: "POST", headers: { "Content-Type": "text/csv" }, body: rakutenFile },
+      );
+      setRakutenPreview(result);
+    } catch (reason) {
+      setRakutenPreview(null);
+      setSidebarMessage(reason instanceof Error ? reason.message : "CSVを確認できませんでした");
+    } finally {
+      setRakutenLoading(false);
+    }
+  }
+
+  async function applyRakutenImport(): Promise<void> {
+    if (!rakutenFile || !rakutenPreview?.summary.importable_symbols) return;
+    setRakutenLoading(true);
+    setSidebarMessage(null);
+    try {
+      const result = await apiJson<RakutenImportResponse>(
+        "/api/v1/portfolio/imports/rakuten/apply",
+        { method: "POST", headers: { "Content-Type": "text/csv" }, body: rakutenFile },
+      );
+      setSidebarMessage(result.message ?? "保有銘柄を登録・更新しました");
+      setRakutenPreview(null);
+      setRakutenFile(null);
+      if (rakutenFileInputRef.current) rakutenFileInputRef.current.value = "";
+      router.refresh();
+    } catch (reason) {
+      setSidebarMessage(reason instanceof Error ? reason.message : "CSVを取り込めませんでした");
+    } finally {
+      setRakutenLoading(false);
+    }
+  }
+
   async function addCandidateToWatchlist(item: NavItem): Promise<void> {
     await runMutation(
       () => apiJson("/api/v1/watchlists/%E3%82%A6%E3%82%A9%E3%83%83%E3%83%81/items/bulk", {
@@ -476,15 +546,6 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const stage = analysis?.position_entry ?? analysis?.transition_readiness;
   const latestBar = bars?.bars.at(-1);
   const horizonProfile = horizonProfiles[horizon];
-  const currentPrice = latestBar ? Number(latestBar.close) : null;
-  const invalidation = decision?.execution_stop_price ?? null;
-  const riskPerShare = currentPrice != null && invalidation != null
-    ? currentPrice - invalidation
-    : null;
-  const theoreticalShares = riskPerShare && riskPerShare > 0
-    ? Math.floor(Number(riskAmount) / riskPerShare)
-    : null;
-  const unitShares = theoreticalShares == null ? null : Math.floor(theoreticalShares / 100) * 100;
 
   return (
     <div className={`workspace${sidebarCollapsed ? " sidebar-is-collapsed" : ""}`}>
@@ -513,15 +574,66 @@ export function DashboardShell({ data }: { data: DashboardData }) {
           </div>
 
           {tab === "positions" && (
-            <details className="sidebar-editor">
-              <summary>保有銘柄を登録・更新</summary>
-              <form onSubmit={savePosition}>
-                <input value={positionSymbol} onChange={(event) => setPositionSymbol(event.target.value)} placeholder="証券コード" maxLength={4} required />
-                <input value={positionQuantity} onChange={(event) => setPositionQuantity(event.target.value)} placeholder="数量" inputMode="decimal" required />
-                <input value={positionCost} onChange={(event) => setPositionCost(event.target.value)} placeholder="平均取得単価（任意）" inputMode="decimal" />
-                <button type="submit" disabled={mutating}>保存</button>
-              </form>
-            </details>
+            <div className="position-editors">
+              <details className="sidebar-editor">
+                <summary>1銘柄を登録・更新</summary>
+                <form onSubmit={savePosition}>
+                  <input value={positionSymbol} onChange={(event) => setPositionSymbol(event.target.value)} placeholder="証券コード" maxLength={4} required />
+                  <input value={positionQuantity} onChange={(event) => setPositionQuantity(event.target.value)} placeholder="数量" inputMode="decimal" required />
+                  <input value={positionCost} onChange={(event) => setPositionCost(event.target.value)} placeholder="平均取得単価（任意）" inputMode="decimal" />
+                  <button type="submit" disabled={mutating || rakutenLoading}>保存</button>
+                </form>
+              </details>
+              <details className="sidebar-editor rakuten-importer">
+                <summary>楽天証券CSVから取り込む</summary>
+                <form onSubmit={previewRakutenImport}>
+                  <label className="csv-file-field">
+                    <span>資産残高（すべて）のCSV</span>
+                    <input
+                      ref={rakutenFileInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={(event) => selectRakutenFile(event.target.files?.[0] ?? null)}
+                      required
+                    />
+                  </label>
+                  <button type="submit" disabled={!rakutenFile || rakutenLoading || mutating}>
+                    {rakutenLoading && !rakutenPreview ? "確認中…" : "内容を確認"}
+                  </button>
+                </form>
+                <p className="import-note">国内株式だけを対象にし、CSVにない既存保有は削除しません。CSVファイル自体は保存しません。</p>
+                {rakutenPreview && (
+                  <div className="import-preview" aria-live="polite">
+                    <dl>
+                      <div><dt>登録・更新</dt><dd>{rakutenPreview.summary.importable_symbols}銘柄</dd></div>
+                      <div><dt>対象外</dt><dd>{rakutenPreview.summary.ignored_rows}件</dd></div>
+                      <div><dt>要確認</dt><dd>{rakutenPreview.summary.unmatched_symbols + rakutenPreview.summary.invalid_domestic_rows}件</dd></div>
+                    </dl>
+                    <div className="import-position-list">
+                      {rakutenPreview.positions.map((position) => (
+                        <div key={position.symbol} className={position.status === "ready" ? "" : "has-warning"}>
+                          <span><strong>{position.symbol}</strong> {position.display_name}</span>
+                          <small>{Number(position.quantity).toLocaleString("ja-JP")}株・{position.account_type}</small>
+                          {position.status !== "ready" && <em>{position.message}</em>}
+                        </div>
+                      ))}
+                    </div>
+                    {Object.keys(rakutenPreview.skipped_types).length > 0 && (
+                      <p>{Object.entries(rakutenPreview.skipped_types).map(([name, count]) => `${name} ${count}件`).join("、")}は対象外です。</p>
+                    )}
+                    {rakutenPreview.summary.duplicate_rows > 0 && <p>同一コードの{rakutenPreview.summary.duplicate_rows}行を数量加重平均で統合します。</p>}
+                    <button
+                      type="button"
+                      className="import-apply-button"
+                      disabled={!rakutenPreview.summary.importable_symbols || rakutenLoading || mutating}
+                      onClick={applyRakutenImport}
+                    >
+                      {rakutenLoading ? "登録中…" : `${rakutenPreview.summary.importable_symbols}銘柄を登録・更新`}
+                    </button>
+                  </div>
+                )}
+              </details>
+            </div>
           )}
           {tab === "watchlist" && (
             <details className="sidebar-editor">
@@ -534,6 +646,22 @@ export function DashboardShell({ data }: { data: DashboardData }) {
           )}
           {tab === "candidates" && (
             <div className="candidate-controls">
+              <div className="candidate-heading">
+                <span>日足 {candidateItems[0]?.as_of_date ?? "未生成"}</span>
+                <button type="button" className="list-tool-button" disabled={refreshing}
+                  onClick={() => startRefresh(() => router.refresh())}>
+                  <span aria-hidden="true">↻</span> {refreshing ? "再読み込み中…" : "一覧を再読み込み"}
+                </button>
+              </div>
+              <p className="candidate-refresh-note" role="status">
+                {refreshing ? "保存済みの最新一覧を読み込んでいます" : "保存済みの分析結果を表示"}
+              </p>
+              <dl className="candidate-summary" aria-label="絞り込み前の候補件数">
+                <div><dt>テクニカル通過</dt><dd>{candidateItems.filter((item) => item.technical_action === "buy_candidate").length}<small>件</small></dd></div>
+                <div className="candidate-summary-buy"><dt>購入候補</dt><dd>{candidateItems.filter((item) => item.action === "buy_candidate").length}<small>件</small></dd></div>
+                <div><dt>財務確認待ち</dt><dd>{candidateItems.filter((item) => item.screening_status === "data_pending").length}<small>件</small></dd></div>
+                <div><dt>リスク保留</dt><dd>{candidateItems.filter((item) => item.screening_status === "risk_hold").length}<small>件</small></dd></div>
+              </dl>
               <div className="candidate-horizon">
                 <span>候補の分析軸</span>
                 <div role="group" aria-label="分析候補の運用スタイル">
@@ -555,7 +683,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               <summary>
                 <span>絞り込み</span>
                 {activeFilterCount > 0 && <strong>{activeFilterCount}</strong>}
-                <small>{filteredItems.length}/{activeItems.length}件</small>
+                <small>{activeFilterCount ? "適用中" : "条件を指定"}</small>
               </summary>
               <div className="list-filter-grid">
                 <label><span>市場区分</span><select value={listFilters.market} onChange={(event) => setListFilters((current) => ({ ...current, market: event.target.value }))}><option value="all">すべて</option>{filterOptions.markets.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
@@ -566,8 +694,12 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 <label><span>流動性</span><select value={listFilters.liquidity} onChange={(event) => setListFilters((current) => ({ ...current, liquidity: event.target.value }))}><option value="all">すべて</option>{(["very_high", "high", "medium", "low", "unknown"] as const).map((value) => <option key={value} value={value}>{liquidityLabels[value]}</option>)}</select></label>
                 <label><span>データ鮮度</span><select value={listFilters.freshness} onChange={(event) => setListFilters((current) => ({ ...current, freshness: event.target.value }))}><option value="all">すべて</option>{(["fresh", "stale", "missing"] as const).map((value) => <option key={value} value={value}>{freshnessLabels[value]}</option>)}</select></label>
               </div>
-              <button type="button" className="clear-list-filters" disabled={activeFilterCount === 0} onClick={() => setListFilters(defaultListFilters)}>条件をクリア</button>
             </details>
+            <div className="list-results-toolbar">
+              <span role="status">表示 <strong>{filteredItems.length}</strong> / {filterSource.length}件</span>
+              <button type="button" className="list-tool-button" disabled={!hasListConstraints}
+                onClick={clearListConstraints}>絞り込みを解除</button>
+            </div>
           </div>
           {sidebarMessage && <p className="sidebar-message" aria-live="polite">{sidebarMessage}</p>}
           <div className="instrument-list">
@@ -575,13 +707,18 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               const watched = watchedSymbols.has(`${item.provider}:${item.symbol}`);
               return (
                 <div className="instrument-row" key={`${item.provider}-${item.symbol}`}>
-                  <button type="button" className={selected?.symbol === item.symbol ? "instrument active" : "instrument"} onClick={() => selectNavigationItem(item)}>
+                  <button type="button" title={item.judgment_reason ?? undefined} className={selected?.symbol === item.symbol ? "instrument active" : "instrument"} onClick={() => selectNavigationItem(item)}>
                     <span className="instrument-copy">
                       <span className="instrument-symbol-line">
                         <strong>{item.symbol}</strong>
                       </span>
                       <span className="instrument-name">{item.display_name}</span>
                       <span className="instrument-tags">
+                        {tab === "positions" && item.quantity && (
+                          <em title={item.average_cost ? `平均取得単価 ${Number(item.average_cost).toLocaleString("ja-JP")}円` : "平均取得単価は未登録"}>
+                            {item.account_type ?? "口座未設定"}・{Number(item.quantity).toLocaleString("ja-JP")}株
+                          </em>
+                        )}
                         <em title="市場区分">{item.market ?? "市場 未分類"}</em>
                         <em title="商品種別">{item.instrument_type ? instrumentTypeLabels[item.instrument_type] ?? item.instrument_type : "種別 未分類"}</em>
                         <em title={`TOPIX-17分類 ${item.sector_17_code ?? ""}`.trim()}>17: {item.sector_17_name ?? "未分類"}</em>
@@ -591,7 +728,10 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                         <em className={item.freshness_status === "fresh" ? "tag-fresh" : "tag-caution"} title={item.latest_trade_date ? `最新日足 ${item.latest_trade_date}` : "日足データがありません"}>{freshnessTag(item)}</em>
                       </span>
                     </span>
+                    <span className="instrument-status">
+                    {item.screening_status === "data_pending" && <small className="pending-label">財務確認待ち</small>}
                     {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
+                    </span>
                   </button>
                   {tab === "candidates" && <button type="button" className={`row-action${watched ? " is-added" : ""}`} aria-label={`${item.symbol}をウォッチへ追加`} title={watched ? "ウォッチ登録済み" : "ウォッチへ追加"} disabled={watched || mutating} onClick={() => addCandidateToWatchlist(item)}>{watched ? "✓" : "+"}</button>}
                   {tab === "watchlist" && <button type="button" className="row-action destructive" aria-label={`${item.symbol}をウォッチから削除`} disabled={mutating} onClick={() => removeItem(item, "watchlist")}>×</button>}
@@ -599,7 +739,14 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 </div>
               );
             })}
-            {!filteredItems.length && <p className="empty-list">該当する銘柄はありません。</p>}
+            {!filteredItems.length && <div className="empty-list">
+              <strong>{!filterSource.length ? "一覧はまだありません" : "条件に合う銘柄はありません"}</strong>
+              <p>{!filterSource.length
+                ? tab === "candidates" ? "データ更新後に一覧を再読み込みしてください。"
+                  : tab === "positions" ? "上の登録欄から保有銘柄を追加できます。" : "上の登録欄や分析候補から銘柄を追加できます。"
+                : "検索・絞り込みを解除すると、ほかの区分の銘柄も確認できます。"}</p>
+              {hasListConstraints && <button type="button" className="list-tool-button" onClick={clearListConstraints}>すべての銘柄を表示</button>}
+            </div>}
           </div>
         </div>
       </aside>
@@ -700,11 +847,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               </article>
             </section>
 
+            <ResearchPanel research={analysis.research} />
+
             {stage && (
               <section className="stage-card">
                 <div className="section-heading"><div><span className="eyebrow">条件進捗</span><h3>{stage.phase_label}</h3></div><strong>{stage.satisfied_conditions} / {stage.total_conditions}</strong></div><p>{stage.summary}</p>
                 <ul className="condition-list">{stage.conditions.map((condition) => <li key={condition.key} className={condition.satisfied ? "satisfied" : "pending"}><span aria-hidden="true">{condition.satisfied ? "✓" : "○"}</span><div><strong>{condition.label}</strong><p>{condition.description}</p></div></li>)}</ul>
-                {riskPerShare != null && riskPerShare > 0 && <div className="position-size"><div><span>実行用損切り目安</span><strong>{invalidation?.toLocaleString("ja-JP")}円</strong></div><div><span>参考目標</span><strong>{decision?.expected_target_price?.toLocaleString("ja-JP") ?? "—"}円</strong></div><label>許容損失額<input value={riskAmount} onChange={(event) => setRiskAmount(event.target.value)} inputMode="numeric" />円</label><div><span>100株単位の理論上限</span><strong>{unitShares?.toLocaleString("ja-JP")}株</strong></div><small>終値基準の目安です。手数料・スリッページ・資金配分は含みません。</small></div>}
+
               </section>
             )}
 

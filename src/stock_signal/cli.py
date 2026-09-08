@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    financial_parser = subparsers.add_parser(
+        "financial-sync", help="Lightの財務履歴をウォッチ・保有銘柄へ同期する"
+    )
+    financial_parser.add_argument("symbols", nargs="*", help="省略時はウォッチ・保有銘柄")
     subparsers.add_parser("health", help="設定を読み込めることを確認する")
     subparsers.add_parser("config", help="秘密情報を除いた設定を表示する")
     subparsers.add_parser("init-db", help="PostgreSQLを最新スキーマへ更新する")
@@ -142,6 +146,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_command(args: argparse.Namespace, settings: Settings) -> int:
+    if args.command == "financial-sync":
+        from stock_signal.database import list_positions
+        from stock_signal.providers.factory import create_market_data_provider_for
+        from stock_signal.research_store import sync_financials
+
+        provider = create_market_data_provider_for("jquants", settings)
+        symbols = args.symbols or sorted({
+            item.symbol for item in [*list_watchlist_items(settings.database_url),
+                                     *list_positions(settings.database_url)]
+            if item.provider == "jquants"
+        })
+        for symbol in symbols:
+            count = sync_financials(settings.database_url, provider, symbol)
+            print(f"{symbol}: 財務開示 {count}件を同期しました", flush=True)
+        return 0
+
     if args.command == "health":
         print("stock-signal: 正常")
         return 0

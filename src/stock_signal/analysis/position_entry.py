@@ -31,9 +31,7 @@ class PositionEntryEvaluator:
     def evaluate(self, bars: Sequence[DailyBar]) -> PositionEntryAssessment:
         ordered = tuple(sorted(bars, key=lambda bar: bar.trade_date))
         if len(ordered) < 70:
-            raise ValueError(
-                "中長期の押し目評価には70営業日以上の日足が必要です"
-            )
+            raise ValueError("中長期の押し目評価には70営業日以上の日足が必要です")
         atr = wilder_atr(ordered, 20)
         if atr is None or atr <= 0:
             raise ValueError("中長期の押し目評価に必要なATRを計算できません")
@@ -46,9 +44,7 @@ class PositionEntryEvaluator:
         ma60 = ma60_series[-1]
         ma60_previous = ma60_series[-6]
         if ma20 is None or ma60 is None or ma60_previous is None:
-            raise ValueError(
-                "中長期の押し目評価に必要な移動平均を計算できません"
-            )
+            raise ValueError("中長期の押し目評価に必要な移動平均を計算できません")
 
         average_order = ma20 >= ma60
         long_average_rising = ma60 > ma60_previous
@@ -103,17 +99,12 @@ class PositionEntryEvaluator:
         ]
 
         day_range = float(latest.high - latest.low)
-        close_position = (
-            (current - float(latest.low)) / day_range if day_range > 0 else 0.5
-        )
+        close_position = (current - float(latest.low)) / day_range if day_range > 0 else 0.5
         rebound_confirmed = (
-            current > closes[-2]
-            and current >= float(latest.open)
-            and close_position >= 0.6
+            current > closes[-2] and current >= float(latest.open) and close_position >= 0.6
         )
         follow_through_confirmed = (
-            closes[-1] > closes[-2] > closes[-3]
-            and (closes[-1] - closes[-3]) / atr >= 0.5
+            closes[-1] > closes[-2] > closes[-3] and (closes[-1] - closes[-3]) / atr >= 0.5
         )
         prior_volumes = [bar.volume for bar in ordered[-61:-1] if bar.volume > 0]
         volume_ratio = None
@@ -122,9 +113,8 @@ class PositionEntryEvaluator:
             if baseline_volume > 0:
                 volume_ratio = latest.volume / baseline_volume
         participation_confirmed = (
-            (volume_ratio is not None and volume_ratio >= self.minimum_volume_ratio)
-            or follow_through_confirmed
-        )
+            volume_ratio is not None and volume_ratio >= self.minimum_volume_ratio
+        ) or follow_through_confirmed
         support_touched_and_held = bool(held_touches)
         conditions = (
             PositionEntryCondition(
@@ -137,10 +127,7 @@ class PositionEntryEvaluator:
                 "long_average_rising",
                 "60日線が上向き",
                 long_average_rising,
-                (
-                    f"60日線は5営業日前から"
-                    f"{(ma60 / ma60_previous - 1) * 100:+.2f}%変化しています"
-                ),
+                (f"60日線は5営業日前から{(ma60 / ma60_previous - 1) * 100:+.2f}%変化しています"),
             ),
             PositionEntryCondition(
                 "trend_floor_held",
@@ -165,10 +152,7 @@ class PositionEntryEvaluator:
                 (
                     "前日終値を上回る陽線で、日中値幅の上側40%に引けました"
                     if rebound_confirmed
-                    else (
-                        "前日終値を上回る陽線と、"
-                        "日中値幅の上側での引けを待ちます"
-                    )
+                    else ("前日終値を上回る陽線と、日中値幅の上側での引けを待ちます")
                 ),
             ),
             PositionEntryCondition(
@@ -177,8 +161,7 @@ class PositionEntryEvaluator:
                 participation_confirmed,
                 (
                     f"出来高は平常時の{volume_ratio:.2f}倍です"
-                    if volume_ratio is not None
-                    and volume_ratio >= self.minimum_volume_ratio
+                    if volume_ratio is not None and volume_ratio >= self.minimum_volume_ratio
                     else (
                         "2営業日続けて上昇し、合計0.5 ATR以上反発しました"
                         if follow_through_confirmed
@@ -194,41 +177,22 @@ class PositionEntryEvaluator:
 
         if not trend_preserved:
             phase = PositionEntryPhase.TREND_BROKEN
-            summary = (
-                "中期上昇トレンドを維持できていないため、"
-                "安値だけでは買い場にしません"
-            )
-        elif (
-            support_touched_and_held
-            and rebound_confirmed
-            and participation_confirmed
-        ):
+            summary = "中期上昇トレンドを維持できていないため、安値だけでは買い場にしません"
+        elif support_touched_and_held and rebound_confirmed and participation_confirmed:
             phase = PositionEntryPhase.PULLBACK_CANDIDATE
-            summary = (
-                "中期上昇トレンド内で支持候補への接触と"
-                "日足反発を確認しました"
-            )
+            summary = "中期上昇トレンド内で支持候補への接触と日足反発を確認しました"
         elif any(support.touched for support in relevant_supports):
             phase = PositionEntryPhase.SUPPORT_TEST
-            summary = (
-                "支持候補を試しています。"
-                "終値維持と反発確認を待ちます"
-            )
+            summary = "支持候補を試しています。終値維持と反発確認を待ちます"
         elif nearest_distance <= self.approaching_support_atr:
             phase = PositionEntryPhase.APPROACHING_SUPPORT
             summary = "中期上昇トレンド内で支持候補へ近づいています"
         elif current - ma20 >= self.extended_from_support_atr * atr:
             phase = PositionEntryPhase.TREND_EXTENDED
-            summary = (
-                "上昇トレンドですが支持候補から離れており、"
-                "追随購入を急ぎません"
-            )
+            summary = "上昇トレンドですが支持候補から離れており、追随購入を急ぎません"
         else:
             phase = PositionEntryPhase.NO_SETUP
-            summary = (
-                "中期トレンドは維持していますが、"
-                "明確な押し目条件はありません"
-            )
+            summary = "中期トレンドは維持していますが、明確な押し目条件はありません"
 
         invalidation = None
         if held_touches:
@@ -254,25 +218,17 @@ class PositionEntryEvaluator:
             supports=relevant_supports,
             current_price=round(current, 4),
             atr=round(atr, 4),
-            invalidation_price=(
-                round(invalidation, 4) if invalidation is not None else None
-            ),
+            invalidation_price=(round(invalidation, 4) if invalidation is not None else None),
             target_price=round(target, 4) if target is not None else None,
-            risk_reward_ratio=(
-                round(risk_reward, 2) if risk_reward is not None else None
-            ),
-            volume_ratio=(
-                round(volume_ratio, 2) if volume_ratio is not None else None
-            ),
+            risk_reward_ratio=(round(risk_reward, 2) if risk_reward is not None else None),
+            volume_ratio=(round(volume_ratio, 2) if volume_ratio is not None else None),
             support_touch_age_days=(
                 min(
                     support.touch_age_days
                     for support in held_touches
                     if support.touch_age_days is not None
                 )
-                if any(
-                    support.touch_age_days is not None for support in held_touches
-                )
+                if any(support.touch_age_days is not None for support in held_touches)
                 else None
             ),
         )
@@ -291,13 +247,21 @@ class PositionEntryEvaluator:
         touch_age = next(
             (
                 age
-                for age, bar in enumerate(reversed(bars[-self.support_touch_lookback:]))
+                for age, bar in enumerate(reversed(bars[-self.support_touch_lookback :]))
                 if float(bar.low) <= upper and float(bar.high) >= lower
             ),
             None,
         )
         touched = touch_age is not None
         held = current >= lower
+        if touch_age is not None:
+            touch_index = len(bars) - 1 - touch_age
+            # 下からの接触や、接触後に終値で割れた支持帯を「維持」と扱わない。
+            held = (
+                touch_index > 0
+                and float(bars[touch_index - 1].close) >= lower
+                and all(float(bar.close) >= lower for bar in bars[touch_index:])
+            )
         return PositionSupportLevel(
             key=key,
             label=label,
@@ -326,12 +290,14 @@ class PositionEntryEvaluator:
     ) -> float | None:
         """上値抵抗帯、なければ過去高値から保守的な参考目標を選ぶ。"""
         bands = resistance_bands(bars, lookback=120)
-        above = [band.center for band in bands if band.center > current + 0.1 * atr]
+        if any(band.lower <= current <= band.upper for band in bands):
+            return None
+        above = [band.lower for band in bands if band.lower > current + 0.1 * atr]
         if above:
             return min(above)
         prior_highs = sorted(
             {
-                max(float(bar.high) for bar in bars[-window - 1:-1])
+                max(float(bar.high) for bar in bars[-window - 1 : -1])
                 for window in (20, 60, 120)
                 if len(bars) > window
             }
@@ -353,9 +319,7 @@ class PositionEntryEvaluator:
         for index in range(start, end):
             high = float(bars[index].high)
             neighbours = [
-                float(bars[item].high)
-                for item in range(index - 2, index + 3)
-                if item != index
+                float(bars[item].high) for item in range(index - 2, index + 3) if item != index
             ]
             if high >= max(neighbours):
                 peaks.append((index, high))
@@ -380,8 +344,7 @@ class PositionEntryEvaluator:
             if center > current + self.approaching_support_atr * atr:
                 continue
             broke_above = any(
-                float(bar.close) > center + 0.35 * atr
-                for bar in bars[last_peak + 1:-1]
+                float(bar.close) > center + 0.35 * atr for bar in bars[last_peak + 1 : -1]
             )
             if not broke_above:
                 continue

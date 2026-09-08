@@ -1,0 +1,816 @@
+{
+  "universe": [
+    "285A",
+    "6976",
+    "9984",
+    "6857",
+    "5803",
+    "8035",
+    "6981",
+    "4062",
+    "6920",
+    "8306",
+    "6146",
+    "5801",
+    "5016",
+    "9983",
+    "7203",
+    "8316",
+    "8411",
+    "7974",
+    "6525",
+    "7011"
+  ],
+  "summary": [
+    {
+      "horizon": 5,
+      "variant": "baseline",
+      "events": 14,
+      "mean_net_percent": 1.6143885903225481,
+      "mean_mae_percent": -4.264344460001757,
+      "benchmark_events": 14,
+      "mean_excess_percent": 0.9916260003517594
+    },
+    {
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "events": 14,
+      "mean_net_percent": 1.6143885903225481,
+      "mean_mae_percent": -4.264344460001757,
+      "benchmark_events": 14,
+      "mean_excess_percent": 0.9916260003517594
+    },
+    {
+      "horizon": 5,
+      "variant": "require_bullish",
+      "events": 0,
+      "mean_net_percent": null,
+      "mean_mae_percent": null,
+      "benchmark_events": 0,
+      "mean_excess_percent": null
+    },
+    {
+      "horizon": 20,
+      "variant": "baseline",
+      "events": 26,
+      "mean_net_percent": 6.892965558810967,
+      "mean_mae_percent": -6.724765626875985,
+      "benchmark_events": 26,
+      "mean_excess_percent": 3.79180399124419
+    },
+    {
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "events": 25,
+      "mean_net_percent": 7.145121611703526,
+      "mean_mae_percent": -6.59900186208661,
+      "benchmark_events": 25,
+      "mean_excess_percent": 3.963265796765578
+    },
+    {
+      "horizon": 20,
+      "variant": "require_bullish",
+      "events": 0,
+      "mean_net_percent": null,
+      "mean_mae_percent": null,
+      "benchmark_events": 0,
+      "mean_excess_percent": null
+    }
+  ],
+  "events": [
+    {
+      "symbol": "285A",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-09-01",
+      "net_percent": 16.683116883116877,
+      "excess_percent": 14.677598527680601,
+      "mae_percent": -4.749536178107605
+    },
+    {
+      "symbol": "285A",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-09-01",
+      "net_percent": 16.683116883116877,
+      "excess_percent": 14.677598527680601,
+      "mae_percent": -4.749536178107605
+    },
+    {
+      "symbol": "285A",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-12-24",
+      "net_percent": 69.76775679410409,
+      "excess_percent": 65.7762258151933,
+      "mae_percent": -4.836480884385075
+    },
+    {
+      "symbol": "285A",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-12-24",
+      "net_percent": 69.76775679410409,
+      "excess_percent": 65.7762258151933,
+      "mae_percent": -4.836480884385075
+    },
+    {
+      "symbol": "6976",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-03-18",
+      "net_percent": 48.6782816229117,
+      "excess_percent": 44.579696620519194,
+      "mae_percent": -13.93794749403341
+    },
+    {
+      "symbol": "6976",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-03-18",
+      "net_percent": 48.6782816229117,
+      "excess_percent": 44.579696620519194,
+      "mae_percent": -13.93794749403341
+    },
+    {
+      "symbol": "6976",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-04-06",
+      "net_percent": 46.27175203341393,
+      "excess_percent": 41.79996859949457,
+      "mae_percent": -0.5935370411079388
+    },
+    {
+      "symbol": "6976",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-04-06",
+      "net_percent": 46.27175203341393,
+      "excess_percent": 41.79996859949457,
+      "mae_percent": -0.5935370411079388
+    },
+    {
+      "symbol": "6857",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-01-13",
+      "net_percent": -3.246028880866425,
+      "excess_percent": -3.40282474878828,
+      "mae_percent": -3.813176895306858
+    },
+    {
+      "symbol": "6857",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-01-13",
+      "net_percent": -3.246028880866425,
+      "excess_percent": -3.40282474878828,
+      "mae_percent": -3.813176895306858
+    },
+    {
+      "symbol": "6857",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-02-06",
+      "net_percent": -12.749945513984738,
+      "excess_percent": -10.102531764487242,
+      "mae_percent": -19.65128950236106
+    },
+    {
+      "symbol": "6857",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-02-06",
+      "net_percent": -12.749945513984738,
+      "excess_percent": -10.102531764487242,
+      "mae_percent": -19.65128950236106
+    },
+    {
+      "symbol": "6981",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-01-16",
+      "net_percent": -2.200000000000002,
+      "excess_percent": -1.8569424193237705,
+      "mae_percent": -4.411764705882348
+    },
+    {
+      "symbol": "6981",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-01-16",
+      "net_percent": -2.200000000000002,
+      "excess_percent": -1.8569424193237705,
+      "mae_percent": -4.411764705882348
+    },
+    {
+      "symbol": "6981",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-02-17",
+      "net_percent": 17.79385303157306,
+      "excess_percent": 16.42371758393513,
+      "mae_percent": -3.772003352891873
+    },
+    {
+      "symbol": "6981",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-02-17",
+      "net_percent": 17.79385303157306,
+      "excess_percent": 16.42371758393513,
+      "mae_percent": -3.772003352891873
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-08-01",
+      "net_percent": 7.266666666666666,
+      "excess_percent": 1.987459898234789,
+      "mae_percent": -0.4444444444444473
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-08-01",
+      "net_percent": 7.266666666666666,
+      "excess_percent": 1.987459898234789,
+      "mae_percent": -0.4444444444444473
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-11-19",
+      "net_percent": 0.4692160611854625,
+      "excess_percent": -1.6063917628350133,
+      "mae_percent": -4.206500956022941
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-11-19",
+      "net_percent": 0.4692160611854625,
+      "excess_percent": -1.6063917628350133,
+      "mae_percent": -4.206500956022941
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-11-27",
+      "net_percent": -0.7025125628140725,
+      "excess_percent": -2.0268720169912213,
+      "mae_percent": -2.041457286432158
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-11-27",
+      "net_percent": -0.7025125628140725,
+      "excess_percent": -2.0268720169912213,
+      "mae_percent": -2.041457286432158
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-12-26",
+      "net_percent": -1.9241379310344862,
+      "excess_percent": -5.327293980128578,
+      "mae_percent": -3.6050156739811934
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-12-26",
+      "net_percent": -1.9241379310344862,
+      "excess_percent": -5.327293980128578,
+      "mae_percent": -3.6050156739811934
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-03-10",
+      "net_percent": 7.326881720430101,
+      "excess_percent": 5.590101802675074,
+      "mae_percent": -9.112903225806457
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-03-10",
+      "net_percent": 7.326881720430101,
+      "excess_percent": 5.590101802675074,
+      "mae_percent": -9.112903225806457
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-06-11",
+      "net_percent": -1.1616389672833736,
+      "excess_percent": -4.78197916710622,
+      "mae_percent": -10.933416954113095
+    },
+    {
+      "symbol": "6981",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-06-11",
+      "net_percent": -1.1616389672833736,
+      "excess_percent": -4.78197916710622,
+      "mae_percent": -10.933416954113095
+    },
+    {
+      "symbol": "4062",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-11-17",
+      "net_percent": -13.434172387490461,
+      "excess_percent": -14.707576450641502,
+      "mae_percent": -19.90846681922197
+    },
+    {
+      "symbol": "4062",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-11-17",
+      "net_percent": -13.434172387490461,
+      "excess_percent": -14.707576450641502,
+      "mae_percent": -19.90846681922197
+    },
+    {
+      "symbol": "6920",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-11-28",
+      "net_percent": 4.275013059376631,
+      "excess_percent": 3.20164781301715,
+      "mae_percent": -4.179000522375064
+    },
+    {
+      "symbol": "6920",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-11-28",
+      "net_percent": 4.275013059376631,
+      "excess_percent": 3.20164781301715,
+      "mae_percent": -4.179000522375064
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-09-19",
+      "net_percent": -1.869131628987952,
+      "excess_percent": -0.9337372896224938,
+      "mae_percent": -1.8381576167335711
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-09-19",
+      "net_percent": -1.869131628987952,
+      "excess_percent": -0.9337372896224938,
+      "mae_percent": -1.8381576167335711
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-09-26",
+      "net_percent": -1.774468085106384,
+      "excess_percent": -0.6304954862694223,
+      "mae_percent": -3.787234042553189
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-09-26",
+      "net_percent": -1.774468085106384,
+      "excess_percent": -0.6304954862694223,
+      "mae_percent": -3.787234042553189
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-09-30",
+      "net_percent": -2.935368956743001,
+      "excess_percent": -6.1052307421324725,
+      "mae_percent": -5.1950805767599695
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-09-30",
+      "net_percent": -2.935368956743001,
+      "excess_percent": -6.1052307421324725,
+      "mae_percent": -5.1950805767599695
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-05-18",
+      "net_percent": 0.9881188118811892,
+      "excess_percent": -1.0365406829810908,
+      "mae_percent": -0.1980198019801982
+    },
+    {
+      "symbol": "8306",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-05-18",
+      "net_percent": 0.9881188118811892,
+      "excess_percent": -1.0365406829810908,
+      "mae_percent": -0.1980198019801982
+    },
+    {
+      "symbol": "8306",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-08-05",
+      "net_percent": 6.3359477124182995,
+      "excess_percent": 2.79197896263097,
+      "mae_percent": -0.2662793512466677
+    },
+    {
+      "symbol": "8306",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-08-05",
+      "net_percent": 6.3359477124182995,
+      "excess_percent": 2.79197896263097,
+      "mae_percent": -0.2662793512466677
+    },
+    {
+      "symbol": "8306",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-01-27",
+      "net_percent": 6.357377049180335,
+      "excess_percent": -3.173297339435832,
+      "mae_percent": -0.6921675774134828
+    },
+    {
+      "symbol": "8306",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-01-27",
+      "net_percent": 6.357377049180335,
+      "excess_percent": -3.173297339435832,
+      "mae_percent": -0.6921675774134828
+    },
+    {
+      "symbol": "8306",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-01-29",
+      "net_percent": 1.0567324955116588,
+      "excess_percent": -8.348892833087039,
+      "mae_percent": -1.4721723518851038
+    },
+    {
+      "symbol": "8306",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-01-29",
+      "net_percent": 1.0567324955116588,
+      "excess_percent": -8.348892833087039,
+      "mae_percent": -1.4721723518851038
+    },
+    {
+      "symbol": "6146",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-03-06",
+      "net_percent": -1.0291382884216713,
+      "excess_percent": -0.7009008408949025,
+      "mae_percent": -10.512289013917675
+    },
+    {
+      "symbol": "6146",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-03-06",
+      "net_percent": -1.0291382884216713,
+      "excess_percent": -0.7009008408949025,
+      "mae_percent": -10.512289013917675
+    },
+    {
+      "symbol": "5801",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-10-08",
+      "net_percent": -3.85730450596079,
+      "excess_percent": -2.27414074589799,
+      "mae_percent": -11.214386744796933
+    },
+    {
+      "symbol": "5801",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-10-08",
+      "net_percent": -3.85730450596079,
+      "excess_percent": -2.27414074589799,
+      "mae_percent": -11.214386744796933
+    },
+    {
+      "symbol": "5801",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-08-18",
+      "net_percent": 0.5890642364970058,
+      "excess_percent": -0.4947411467905116,
+      "mae_percent": -9.868859746610347
+    },
+    {
+      "symbol": "5801",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-08-26",
+      "net_percent": 3.4599099099099195,
+      "excess_percent": 0.019387501939749363,
+      "mae_percent": -6.25
+    },
+    {
+      "symbol": "5801",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-08-26",
+      "net_percent": 3.4599099099099195,
+      "excess_percent": 0.019387501939749363,
+      "mae_percent": -6.25
+    },
+    {
+      "symbol": "5801",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-11-17",
+      "net_percent": -10.596039603960394,
+      "excess_percent": -11.869443667111435,
+      "mae_percent": -12.96039603960396
+    },
+    {
+      "symbol": "5801",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-11-17",
+      "net_percent": -10.596039603960394,
+      "excess_percent": -11.869443667111435,
+      "mae_percent": -12.96039603960396
+    },
+    {
+      "symbol": "7203",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-01-21",
+      "net_percent": 3.7669421487603216,
+      "excess_percent": -2.2937988453557434,
+      "mae_percent": -7.961432506887056
+    },
+    {
+      "symbol": "7203",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-01-21",
+      "net_percent": 3.7669421487603216,
+      "excess_percent": -2.2937988453557434,
+      "mae_percent": -7.961432506887056
+    },
+    {
+      "symbol": "8316",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-05-19",
+      "net_percent": -0.5777923784494041,
+      "excess_percent": -2.6287114388270028,
+      "mae_percent": -4.040735873850199
+    },
+    {
+      "symbol": "8316",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-05-19",
+      "net_percent": -0.5777923784494041,
+      "excess_percent": -2.6287114388270028,
+      "mae_percent": -4.040735873850199
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-08-06",
+      "net_percent": 7.498412698412693,
+      "excess_percent": 3.752043364948876,
+      "mae_percent": -0.23809523809523725
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-08-06",
+      "net_percent": 7.498412698412693,
+      "excess_percent": 3.752043364948876,
+      "mae_percent": -0.23809523809523725
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-01-27",
+      "net_percent": 8.87407407407408,
+      "excess_percent": -0.6566003145420876,
+      "mae_percent": -2.111111111111108
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-01-27",
+      "net_percent": 8.87407407407408,
+      "excess_percent": -0.6566003145420876,
+      "mae_percent": -2.111111111111108
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-01-29",
+      "net_percent": 4.88256880733946,
+      "excess_percent": -4.523056521259238,
+      "mae_percent": -3.00917431192661
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-01-29",
+      "net_percent": 4.88256880733946,
+      "excess_percent": -4.523056521259238,
+      "mae_percent": -3.00917431192661
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-08-06",
+      "net_percent": 3.3526315789473626,
+      "excess_percent": 2.580866653041669,
+      "mae_percent": -5.45321637426901
+    },
+    {
+      "symbol": "8316",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-08-06",
+      "net_percent": 3.3526315789473626,
+      "excess_percent": 2.580866653041669,
+      "mae_percent": -5.45321637426901
+    },
+    {
+      "symbol": "8411",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-10-30",
+      "net_percent": -1.2394194940184342,
+      "excess_percent": -0.508131709114612,
+      "mae_percent": -4.942145518729157
+    },
+    {
+      "symbol": "8411",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-10-30",
+      "net_percent": -1.2394194940184342,
+      "excess_percent": -0.508131709114612,
+      "mae_percent": -4.942145518729157
+    },
+    {
+      "symbol": "8411",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2025-11-04",
+      "net_percent": -0.278895463510853,
+      "excess_percent": -0.7310048190983354,
+      "mae_percent": -4.398422090729781
+    },
+    {
+      "symbol": "8411",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2025-11-04",
+      "net_percent": -0.278895463510853,
+      "excess_percent": -0.7310048190983354,
+      "mae_percent": -4.398422090729781
+    },
+    {
+      "symbol": "8411",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-05-25",
+      "net_percent": -1.7753424657534265,
+      "excess_percent": -1.6190085925172126,
+      "mae_percent": -4.164383561643836
+    },
+    {
+      "symbol": "8411",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-05-25",
+      "net_percent": -1.7753424657534265,
+      "excess_percent": -1.6190085925172126,
+      "mae_percent": -4.164383561643836
+    },
+    {
+      "symbol": "8411",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2025-11-21",
+      "net_percent": 9.175,
+      "excess_percent": 6.754619193422973,
+      "mae_percent": -0.901073619631898
+    },
+    {
+      "symbol": "8411",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2025-11-21",
+      "net_percent": 9.175,
+      "excess_percent": 6.754619193422973,
+      "mae_percent": -0.901073619631898
+    },
+    {
+      "symbol": "8411",
+      "horizon": 20,
+      "variant": "baseline",
+      "date": "2026-02-19",
+      "net_percent": -18.58953888506538,
+      "excess_percent": -9.633715802102804,
+      "mae_percent": -19.697178251892634
+    },
+    {
+      "symbol": "8411",
+      "horizon": 20,
+      "variant": "exclude_bearish",
+      "date": "2026-02-19",
+      "net_percent": -18.58953888506538,
+      "excess_percent": -9.633715802102804,
+      "mae_percent": -19.697178251892634
+    },
+    {
+      "symbol": "7011",
+      "horizon": 5,
+      "variant": "baseline",
+      "date": "2026-08-07",
+      "net_percent": 6.8901033973412185,
+      "excess_percent": 4.508216567881584,
+      "mae_percent": -3.1757754800590843
+    },
+    {
+      "symbol": "7011",
+      "horizon": 5,
+      "variant": "exclude_bearish",
+      "date": "2026-08-07",
+      "net_percent": 6.8901033973412185,
+      "excess_percent": 4.508216567881584,
+      "mae_percent": -3.1757754800590843
+    }
+  ],
+  "latest_divergences": {
+    "285A": [],
+    "6976": [],
+    "9984": [],
+    "6857": [],
+    "5803": [],
+    "8035": [],
+    "6981": [],
+    "4062": [],
+    "6920": [],
+    "8306": [],
+    "6146": [],
+    "5801": [],
+    "5016": [],
+    "9983": [],
+    "7203": [],
+    "8316": [],
+    "8411": [],
+    "7974": [],
+    "6525": [],
+    "7011": []
+  },
+  "limitations": "現在の流動性上位20銘柄、直近最大252評価日。生存者・選択バイアスあり。各方式で連続候補初日のみ。取引重複あり。片道10bp、固定期間終値決済。損切り決済・財務・保有制約・当時の決算予定なし。独立した検証期間なし。"
+}

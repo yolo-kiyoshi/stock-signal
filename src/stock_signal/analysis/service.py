@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
-
 from stock_signal.analysis.base import AnalysisEngine
 from stock_signal.analysis.decision import LongOnlyDecisionPolicy
 from stock_signal.analysis.engine import RuleBasedAnalysisEngine
@@ -17,6 +15,7 @@ from stock_signal.market_environment import (
     apply_market_regime_gate,
     latest_market_regime_for_analysis,
 )
+from stock_signal.research import ResearchInputs, enrich_analysis
 
 _ACTION_RANK = {
     "buy_candidate": 3,
@@ -49,23 +48,27 @@ class AnalysisService:
         as_of = bars[-1].trade_date if bars else None
         resolved_provider = provider or (bars[-1].provider if bars else None)
         context = AnalysisContext(
-            market_bars=tuple(load_daily_bars(
-                self.database_url, "TOPIX", provider="jquants"
-            )),
+            market_bars=tuple(load_daily_bars(self.database_url, "TOPIX", provider="jquants")),
             next_earnings_date=(
                 next_earnings_date(self.database_url, symbol, as_of)
                 if as_of and resolved_provider == "jquants"
                 else None
             ),
-            earnings_synced=data_sync_succeeded(
-                self.database_url, "jquants_earnings_calendar"
-            ),
+            earnings_synced=data_sync_succeeded(self.database_url, "jquants_earnings_calendar"),
             jquants_plan=self.jquants_plan,
         )
         result = self.engine.analyze(symbol, bars, horizon_days, context)
-        return apply_market_regime_gate(
+        technical_action = result.investment_decision.action.value
+        result = apply_market_regime_gate(
             result,
             latest_market_regime_for_analysis(self.database_url, as_of),
+        )
+        return enrich_analysis(
+            self.database_url,
+            result,
+            bars,
+            provider=resolved_provider,
+            technical_action=technical_action,
         )
 
     def analyze_watchlist(self, horizon_days: int) -> list[tuple[str, AnalysisResult]]:
@@ -77,12 +80,12 @@ class AnalysisService:
             results,
             key=lambda item: (
                 _ACTION_RANK.get(
-                    item[1].investment_decision.action.value
-                    if item[1].investment_decision else "",
+                    item[1].investment_decision.action.value if item[1].investment_decision else "",
                     0,
                 ),
                 item[1].investment_decision.evidence_score
-                if item[1].investment_decision else item[1].winning_score,
+                if item[1].investment_decision
+                else item[1].winning_score,
             ),
             reverse=True,
         )
@@ -91,22 +94,13 @@ class AnalysisService:
         self,
         items: list[WatchlistItem],
         horizon_days: int,
+        *,
+        include_research: bool = True,
     ) -> list[tuple[str, AnalysisResult]]:
         """複数銘柄を共通の市場コンテキストで効率的に分析する。"""
-        market_bars = tuple(
-            load_daily_bars(self.database_url, "TOPIX", provider="jquants")
-        )
-        earnings_synced = data_sync_succeeded(
-            self.database_url, "jquants_earnings_calendar"
-        )
-        latest_as_of = max(
-            (item.latest_trade_date for item in items if item.latest_trade_date),
-            default=None,
-        )
-        market_regime = latest_market_regime_for_analysis(
-            self.database_url,
-            date.fromisoformat(latest_as_of) if latest_as_of else None,
-        )
+        market_bars = tuple(load_daily_bars(self.database_url, "TOPIX", provider="jquants"))
+        earnings_synced = data_sync_succeeded(self.database_url, "jquants_earnings_calendar")
+        inputs = ResearchInputs(self.database_url)
         results = []
         for item in items:
             bars = load_daily_bars(
@@ -125,13 +119,19 @@ class AnalysisService:
                 earnings_synced=earnings_synced,
                 jquants_plan=self.jquants_plan,
             )
-            results.append(
-                (
-                    item.display_name,
+            result = self.engine.analyze(item.symbol, bars, horizon_days, context)
+            if include_research:
+                technical_action = result.investment_decision.action.value
+                result = enrich_analysis(
+                    self.database_url,
                     apply_market_regime_gate(
-                        self.engine.analyze(item.symbol, bars, horizon_days, context),
-                        market_regime,
+                        result,
+                        latest_market_regime_for_analysis(self.database_url, as_of),
                     ),
+                    bars,
+                    provider=item.provider,
+                    inputs=inputs,
+                    technical_action=technical_action,
                 )
-            )
+            results.append((item.display_name, result))
         return results

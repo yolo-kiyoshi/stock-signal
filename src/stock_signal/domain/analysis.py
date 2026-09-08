@@ -132,6 +132,9 @@ class PatternDetection:
     breakout_kind: BreakoutKind
     prior_trend_score: float | None
     description: str
+    formation_start: str | None = None
+    formation_end: str | None = None
+    pattern_height: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,6 +314,8 @@ class AnalysisResult:
     position_entry: PositionEntryAssessment | None = None
     equity_checks: tuple[EquityCheck, ...] = ()
     investment_decision: InvestmentDecision | None = None
+
+    research: dict | None = None
 
     @property
     def winning_score(self) -> float:

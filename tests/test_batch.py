@@ -49,6 +49,9 @@ def make_bar(symbol: str, trade_date: date, provider: str = "test") -> DailyBar:
 
 
 class RecordingProvider:
+    def fetch_financial_summaries(self, symbol):
+        return []
+
     def __init__(self, provider_name: str, *, fail: bool = False) -> None:
         self.provider_name = provider_name
         self.fail = fail
@@ -223,9 +226,12 @@ def test_daily_batch_fetches_only_after_latest_date_and_records_run(database_url
     assert json.loads(summary_json) == {"succeeded": 2, "failed": 0}
     assert result.items[0].analysis_summary.keys() == {"5", "20"}
     assert result.items[0].analysis_summary["5"]["action"] in {
-        "buy_candidate", "watch", "avoid_new_buy", "insufficient_data"
+        "buy_candidate",
+        "watch",
+        "avoid_new_buy",
+        "insufficient_data",
     }
-    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.9.0"
+    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.11.0"
 
 
 def test_failure_of_one_symbol_does_not_discard_other_symbol(database_url) -> None:
@@ -283,21 +289,21 @@ def test_light_batch_syncs_references_and_activates_security_code(database_url) 
 
     assert result.status == "success"
     assert {item.symbol for item in result.items} == {
-        "@TOPIX", "@EARNINGS", "@SCREEN", "7203"
+        "@TOPIX",
+        "@EARNINGS",
+        "@SCREEN",
+        "@FINS:7203",
+        "7203",
     }
     assert [item.symbol for item in list_watchlist_items(database_url)] == ["7203"]
     assert load_daily_bars(database_url, "TOPIX", provider="jquants")
     assert provider.calls[0] == ("7203", date(2021, 2, 11), date(2026, 2, 10))
-    assert [call[0] for call in provider.reference_calls] == [
-        "topix", "earnings", "master"
-    ]
+    assert [call[0] for call in provider.reference_calls] == ["topix", "earnings", "master"]
 
 
 def test_light_upgrade_backfills_five_years_only_once(database_url) -> None:
     settings = Settings(database_url=database_url, jquants_plan="light")
-    upsert_daily_bars(
-        database_url, [make_bar("7203", date(2025, 12, 30), provider="jquants")]
-    )
+    upsert_daily_bars(database_url, [make_bar("7203", date(2025, 12, 30), provider="jquants")])
     runner = DailyBatchRunner(
         settings,
         provider_factory=lambda _: RecordingProvider("jquants"),
@@ -421,10 +427,7 @@ def test_empty_bulk_file_is_reported_as_failure(database_url) -> None:
         "errors": [
             {
                 "file_key": "daily-20260210",
-                "message": (
-                    "バルクファイルに有効な日足がありません: "
-                    "daily-20260210"
-                ),
+                "message": ("バルクファイルに有効な日足がありません: daily-20260210"),
             }
         ],
     }

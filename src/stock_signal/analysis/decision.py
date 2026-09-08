@@ -6,6 +6,7 @@ from datetime import date
 from statistics import median
 
 from stock_signal.analysis.horizons import get_horizon_profile
+from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.analysis.market_relative import calculate_market_relative_metrics
 from stock_signal.domain.analysis import (
     AnalysisContext,
@@ -61,8 +62,7 @@ class LongOnlyDecisionPolicy:
                 CheckStatus.EVALUATED,
                 latest.volume_ratio,
                 "倍",
-                "過去60営業日（不足時は取得可能な20営業日以上）の"
-                "中央値との倍率です",
+                "過去60営業日（不足時は取得可能な20営業日以上）の中央値との倍率です",
             )
         else:
             volume = EquityCheck(
@@ -83,8 +83,7 @@ class LongOnlyDecisionPolicy:
                 CheckStatus.EVALUATED,
                 latest.gap_atr,
                 "ATR",
-                "絶対値が1.5を超える場合はイベント主導の"
-                "可能性として扱います",
+                "絶対値が1.5を超える場合はイベント主導の可能性として扱います",
             )
         else:
             gap = EquityCheck(
@@ -143,8 +142,7 @@ class LongOnlyDecisionPolicy:
                     CheckStatus.EVALUATED,
                     float(age_days),
                     "日",
-                    f"最新日足は{age_days}日前で、判断上限の"
-                    f"{self.maximum_data_age_days}日以内です",
+                    f"最新日足は{age_days}日前で、判断上限の{self.maximum_data_age_days}日以内です",
                 )
             else:
                 freshness = EquityCheck(
@@ -204,7 +202,46 @@ class LongOnlyDecisionPolicy:
                 else "TDnetアドオン未契約のため、決算以外の開示要因は判定できません"
             ),
         )
+        prior_atr = wilder_atr(bars, end=len(bars) - 1)
+        current_gap = (
+            float(bars[-1].open - bars[-2].close) / prior_atr
+            if prior_atr and len(bars) > 1
+            else None
+        )
+        execution_safety = EquityCheck(
+            "execution_safety",
+            "現在足の約定・窓開け確認",
+            CheckStatus.EVALUATED,
+            0.0
+            if bars and bars[-1].volume > 0 and current_gap is not None and abs(current_gap) <= 1.5
+            else 1.0,
+            None,
+            "現在足の出来高が0、窓開け1.5 ATR超、または確認データ不足の場合は保留します",
+        )
+        confirmation_reasons = []
+        latest_patterns = self._latest_patterns(patterns)
+        lead = max(latest_patterns, key=lambda item: item.fit_score) if latest_patterns else None
+        if bars and lead and lead.direction is Direction.UP:
+            current = bars[-1]
+            if float(current.close) <= lead.breakout_level:
+                confirmation_reasons.append(
+                    f"現在の終値{current.close:.2f}が上抜け水準{lead.breakout_level:.2f}以下です"
+                )
+            if current.close < current.open and current.close < (current.high + current.low) / 2:
+                confirmation_reasons.append(
+                    "現在足が陰線かつ日中値幅の下半分で引けており、買い支えを未確認です"
+                )
+        swing_confirmation = EquityCheck(
+            "swing_confirmation",
+            "現在足の上抜け維持・買い支え",
+            CheckStatus.EVALUATED if bars and lead else CheckStatus.UNAVAILABLE,
+            1.0 if confirmation_reasons else 0.0,
+            None,
+            "。".join(confirmation_reasons) or "現在足で上抜け維持・陰線の売り圧力を確認します",
+        )
         return (
+            swing_confirmation,
+            execution_safety,
             freshness,
             volume,
             gap,
@@ -252,22 +289,26 @@ class LongOnlyDecisionPolicy:
             stage = EntryStage.AVOID
             entry_score = 0.0
         elif (
-            direction is Direction.DOWN
-            and not any(item.direction is Direction.UP for item in latest)
-        ) or (
-            horizon_days == 20
-            and position_entry is not None
-            and position_entry.phase
-            in {PositionEntryPhase.TREND_BROKEN, PositionEntryPhase.NO_SETUP}
-        ) or (
-            horizon_days == 5
-            and lifecycle is not None
-            and lifecycle.status
-            in {
-                PatternLifecycleStatus.MONITORING,
-                PatternLifecycleStatus.TARGET_REACHED,
-                PatternLifecycleStatus.EXPIRED,
-            }
+            (
+                direction is Direction.DOWN
+                and not any(item.direction is Direction.UP for item in latest)
+            )
+            or (
+                horizon_days == 20
+                and position_entry is not None
+                and position_entry.phase
+                in {PositionEntryPhase.TREND_BROKEN, PositionEntryPhase.NO_SETUP}
+            )
+            or (
+                horizon_days == 5
+                and lifecycle is not None
+                and lifecycle.status
+                in {
+                    PatternLifecycleStatus.MONITORING,
+                    PatternLifecycleStatus.TARGET_REACHED,
+                    PatternLifecycleStatus.EXPIRED,
+                }
+            )
         ):
             stage = EntryStage.NOT_APPLICABLE
             entry_score = 0.0
@@ -285,7 +326,8 @@ class LongOnlyDecisionPolicy:
         elif (
             transition.phase is TransitionPhase.ONE_GATE_REMAINING
             or position_entry is not None
-            and position_entry.phase in {
+            and position_entry.phase
+            in {
                 PositionEntryPhase.SUPPORT_TEST,
                 PositionEntryPhase.APPROACHING_SUPPORT,
                 PositionEntryPhase.PULLBACK_CANDIDATE,
@@ -300,12 +342,16 @@ class LongOnlyDecisionPolicy:
         execution_stop = (
             position_entry.invalidation_price
             if horizon_days == 20 and position_entry is not None
-            else lifecycle.execution_stop_price if lifecycle is not None else None
+            else lifecycle.execution_stop_price
+            if lifecycle is not None
+            else None
         )
         target = (
             position_entry.target_price
             if horizon_days == 20 and position_entry is not None
-            else lifecycle.target_price if lifecycle is not None else None
+            else lifecycle.target_price
+            if lifecycle is not None
+            else None
         )
         risk_reward = (
             position_entry.risk_reward_ratio
@@ -314,8 +360,51 @@ class LongOnlyDecisionPolicy:
             if lifecycle is not None
             else None
         )
+        confirmation = next((c for c in checks if c.key == "swing_confirmation"), None)
+        if (
+            horizon_days == 5
+            and decision.action is InvestmentAction.BUY_CANDIDATE
+            and confirmation is not None
+            and confirmation.value == 1
+        ):
+            decision = replace(
+                decision,
+                action=InvestmentAction.WATCH,
+                summary="上抜け後の買い支えが未確認のため、現在の購入候補を保留します",
+                cautions=decision.cautions + (confirmation.description,),
+                reasons=decision.reasons + (confirmation.description,),
+            )
+            stage = EntryStage.CONDITIONAL_ENTRY
+            entry_score = min(entry_score, 75.0)
+        safety = next((check for check in checks if check.key == "execution_safety"), None)
+        current_price = transition.current_price
+        invalid_execution = (
+            execution_stop is None
+            or target is None
+            or risk_reward is None
+            or not 0 < execution_stop < current_price < target
+            or risk_reward < (1.5 if horizon_days == 20 else 1.2)
+        )
+        if decision.action is InvestmentAction.BUY_CANDIDATE and (
+            invalid_execution or (safety is not None and safety.value != 0)
+        ):
+            reason = (
+                "現在足の出来高・窓開け条件を確認できないため購入を保留します"
+                if safety is not None and safety.value != 0
+                else "有効な損切り水準と必要な上値余地を確認できないため購入を保留します"
+            )
+            decision = replace(
+                decision,
+                action=InvestmentAction.WATCH,
+                summary=reason,
+                cautions=decision.cautions + (reason,),
+            )
+            stage = EntryStage.CONDITIONAL_ENTRY
+            entry_score = min(entry_score, 75.0)
         setup_score = (
-            lead.fit_score
+            position_entry.readiness_score
+            if horizon_days == 20 and position_entry is not None
+            else lead.fit_score
             if lead is not None
             else position_entry.readiness_score
             if position_entry is not None
@@ -352,29 +441,24 @@ class LongOnlyDecisionPolicy:
         cautions = [
             check.description
             for check in checks
-            if check.status in {
+            if check.status
+            in {
                 CheckStatus.UNAVAILABLE,
                 CheckStatus.PENDING_DATA,
                 CheckStatus.PLAN_UNAVAILABLE,
                 CheckStatus.ADDON_REQUIRED,
             }
         ]
-        cautions.append(
-            "この区分は分析情報であり、注文や利益を"
-            "保証するものではありません"
-        )
+        cautions.append("この区分は分析情報であり、注文や利益を保証するものではありません")
         cautions.append(
             f"{profile.label}は{profile.future_label}を確認する固定ルールであり、"
             "銘柄別の利益を保証する最適期間ではありません"
         )
         cautions.append(profile.caution)
-        relative_strength = next(
-            check for check in checks if check.key == "relative_strength"
-        )
+        relative_strength = next(check for check in checks if check.key == "relative_strength")
         if relative_strength.value is not None and relative_strength.value < -3:
             cautions.append(
-                f"対象期間の相対力はTOPIX比{relative_strength.value:+.2f}%で、"
-                "市場より弱い状態です"
+                f"対象期間の相対力はTOPIX比{relative_strength.value:+.2f}%で、市場より弱い状態です"
             )
 
         if bullish and bearish:
@@ -401,16 +485,14 @@ class LongOnlyDecisionPolicy:
                     lifecycle.summary,
                     (
                         lead.description,
-                        "古い、弱まった、または完了した下降パターンだけでは"
-                        "売買を判断しません",
+                        "古い、弱まった、または完了した下降パターンだけでは売買を判断しません",
                     ),
                     tuple(cautions),
                 )
             return InvestmentDecision(
                 InvestmentAction.AVOID_NEW_BUY,
                 round((lead.fit_score + evidence_score) / 2, 1),
-                "下降パターン完成のため、新規購入と買い増しを"
-                "いったん避けます",
+                "下降パターン完成のため、新規購入と買い増しをいったん避けます",
                 (
                     lead.description,
                     "下降判定は空売りの実行指示には使用しません",
@@ -507,9 +589,7 @@ class LongOnlyDecisionPolicy:
                 earnings.value is not None
                 and 0 <= earnings.value <= profile.earnings_exclusion_days
             ):
-                reasons.append(
-                    f"{int(earnings.value)}日後に決算発表予定があります"
-                )
+                reasons.append(f"{int(earnings.value)}日後に決算発表予定があります")
                 return InvestmentDecision(
                     InvestmentAction.WATCH,
                     evidence_score,
@@ -531,38 +611,33 @@ class LongOnlyDecisionPolicy:
                 return InvestmentDecision(
                     InvestmentAction.WATCH,
                     evidence_score,
-                    "大きな窓開けを伴うため、イベント内容の確認を"
-                    "優先します",
+                    "大きな窓開けを伴うため、イベント内容の確認を優先します",
                     tuple(reasons),
                     (
-                        "決算・適時開示の種別は現在のデータだけでは"
-                        "特定できません",
+                        "決算・適時開示の種別は現在のデータだけでは特定できません",
                         *cautions,
                     ),
                 )
-            if (
-                lead.volume_ratio is None
-                or lead.volume_ratio < self.volume_confirmation_threshold
-            ):
+            if lead.volume_ratio is None or lead.volume_ratio < self.volume_confirmation_threshold:
                 reasons.append("出来高倍率1.5倍の確認条件を満たしていません")
                 return InvestmentDecision(
                     InvestmentAction.WATCH,
                     evidence_score,
-                    "上向きパターンは完成していますが、"
-                    "出来高の裏付けが不足しています",
+                    "上向きパターンは完成していますが、出来高の裏付けが不足しています",
                     tuple(reasons),
                     tuple(cautions),
                 )
             if lead.fit_score < self.minimum_fit_score:
                 reasons.append("形の一致度が購入候補の基準に達していません")
                 return InvestmentDecision(
-                    InvestmentAction.WATCH, evidence_score,
-                    "パターンの形を追加観察します", tuple(reasons), tuple(cautions)
+                    InvestmentAction.WATCH,
+                    evidence_score,
+                    "パターンの形を追加観察します",
+                    tuple(reasons),
+                    tuple(cautions),
                 )
             if lead.breakout_atr is None or lead.breakout_atr < self.minimum_breakout_atr:
-                reasons.append(
-                    "ブレイク幅が0.1 ATRの確認条件を満たしていません"
-                )
+                reasons.append("ブレイク幅が0.1 ATRの確認条件を満たしていません")
                 return InvestmentDecision(
                     InvestmentAction.WATCH,
                     evidence_score,
@@ -575,8 +650,7 @@ class LongOnlyDecisionPolicy:
             return InvestmentDecision(
                 InvestmentAction.BUY_CANDIDATE,
                 evidence_score,
-                "パターン、出来高、上抜け幅が購入候補の"
-                "条件を満たしました",
+                "パターン、出来高、上抜け幅が購入候補の条件を満たしました",
                 tuple(reasons),
                 tuple(cautions),
             )
@@ -604,9 +678,7 @@ class LongOnlyDecisionPolicy:
                     tuple(cautions),
                 )
             if transition.risk_reward_ratio is not None:
-                reasons.append(
-                    f"参考リスクリワードは{transition.risk_reward_ratio:.2f}です"
-                )
+                reasons.append(f"参考リスクリワードは{transition.risk_reward_ratio:.2f}です")
             return InvestmentDecision(
                 InvestmentAction.WATCH,
                 round(transition.readiness_score, 1),
@@ -643,10 +715,7 @@ class LongOnlyDecisionPolicy:
                 InvestmentAction.AVOID_NEW_BUY,
                 round(evidence_score, 1),
                 "下落要因が優勢なため、新規購入をいったん避けます",
-                (
-                    "完成済み下降パターンはありませんが、"
-                    "複数のテクニカル要因が下向きです",
-                ),
+                ("完成済み下降パターンはありませんが、複数のテクニカル要因が下向きです",),
                 tuple(cautions),
             )
         return InvestmentDecision(
@@ -722,9 +791,7 @@ class LongOnlyDecisionPolicy:
                 tuple(reasons),
                 tuple(cautions),
             )
-        relative_short = next(
-            check for check in checks if check.key == "relative_strength_short"
-        )
+        relative_short = next(check for check in checks if check.key == "relative_strength_short")
         if relative_short.value is not None and relative_short.value < -3:
             reasons.append(f"短期TOPIX相対力は{relative_short.value:+.2f}%です")
             return InvestmentDecision(
@@ -734,12 +801,8 @@ class LongOnlyDecisionPolicy:
                 tuple(reasons),
                 tuple(cautions),
             )
-        if (
-            assessment.phase is PositionEntryPhase.PULLBACK_CANDIDATE
-            and (
-                assessment.risk_reward_ratio is None
-                or assessment.risk_reward_ratio < 1.5
-            )
+        if assessment.phase is PositionEntryPhase.PULLBACK_CANDIDATE and (
+            assessment.risk_reward_ratio is None or assessment.risk_reward_ratio < 1.5
         ):
             ratio_text = (
                 "算出不可"
@@ -757,11 +820,7 @@ class LongOnlyDecisionPolicy:
 
         if assessment.phase is PositionEntryPhase.PULLBACK_CANDIDATE:
             nearest = next(
-                (
-                    support
-                    for support in assessment.supports
-                    if support.touched and support.held
-                ),
+                (support for support in assessment.supports if support.touched and support.held),
                 assessment.supports[0] if assessment.supports else None,
             )
             if nearest is not None:
@@ -785,9 +844,7 @@ class LongOnlyDecisionPolicy:
         else:
             summary = assessment.summary
         if assessment.next_condition is not None:
-            reasons.append(
-                f"次の確認条件：{assessment.next_condition.description}"
-            )
+            reasons.append(f"次の確認条件：{assessment.next_condition.description}")
         return InvestmentDecision(
             InvestmentAction.WATCH,
             evidence_score,
@@ -811,21 +868,16 @@ class LongOnlyDecisionPolicy:
     ) -> tuple[EquityCheck, EquityCheck, EquityCheck]:
         profile = get_horizon_profile(horizon_days)
         market_bars = [
-            bar for bar in context.market_bars
-            if not bars or bar.trade_date <= bars[-1].trade_date
+            bar for bar in context.market_bars if not bars or bar.trade_date <= bars[-1].trade_date
         ]
-        metrics = calculate_market_relative_metrics(
-            bars, market_bars, profile.market_window
-        )
+        metrics = calculate_market_relative_metrics(bars, market_bars, profile.market_window)
         if metrics is None:
             unavailable = (
                 CheckStatus.PLAN_UNAVAILABLE
                 if context.jquants_plan == "free"
                 else CheckStatus.PENDING_DATA
             )
-            message = (
-                "TOPIXとの共通取引日が不足しているため、まだ計算できません"
-            )
+            message = "TOPIXとの共通取引日が不足しているため、まだ計算できません"
             short_message = "直近20営業日のTOPIX相対力もまだ計算できません"
             return (
                 EquityCheck(
@@ -863,22 +915,12 @@ class LongOnlyDecisionPolicy:
             f"TOPIX{metrics.market_return_percent:+.2f}%との差です",
         )
         short_window = 20
-        short_metrics = calculate_market_relative_metrics(
-            bars, market_bars, short_window
-        )
+        short_metrics = calculate_market_relative_metrics(bars, market_bars, short_window)
         relative_short = EquityCheck(
             "relative_strength_short",
             "短期TOPIX相対力",
-            (
-                CheckStatus.EVALUATED
-                if short_metrics is not None
-                else CheckStatus.PENDING_DATA
-            ),
-            (
-                short_metrics.relative_strength_percent
-                if short_metrics is not None
-                else None
-            ),
+            (CheckStatus.EVALUATED if short_metrics is not None else CheckStatus.PENDING_DATA),
+            (short_metrics.relative_strength_percent if short_metrics is not None else None),
             "%",
             (
                 f"直近{short_window}営業日の対象株とTOPIXの騰落率差です"
@@ -918,8 +960,7 @@ class LongOnlyDecisionPolicy:
                 "Freeプラン対象外です。TOPIX四本値にはLight以上が必要です",
             )
         market_bars = [
-            bar for bar in context.market_bars
-            if not bars or bar.trade_date <= bars[-1].trade_date
+            bar for bar in context.market_bars if not bars or bar.trade_date <= bars[-1].trade_date
         ]
         if len(market_bars) <= profile.market_window:
             return EquityCheck(
@@ -930,11 +971,7 @@ class LongOnlyDecisionPolicy:
                 "点",
                 "Lightプランで利用可能です。TOPIX日足の同期後に有効になります",
             )
-        change = float(
-            market_bars[-1].close
-            / market_bars[-profile.market_window - 1].close
-            - 1
-        )
+        change = float(market_bars[-1].close / market_bars[-profile.market_window - 1].close - 1)
         score_multiplier = 1000 / abs(profile.market_minimum_return_percent)
         score = max(-100.0, min(100.0, change * score_multiplier))
         return EquityCheck(
@@ -943,8 +980,7 @@ class LongOnlyDecisionPolicy:
             CheckStatus.EVALUATED,
             round(score, 1),
             "点",
-            f"TOPIXの{profile.market_window}営業日騰落率は"
-            f"{change * 100:+.2f}%です",
+            f"TOPIXの{profile.market_window}営業日騰落率は{change * 100:+.2f}%です",
         )
 
     @staticmethod
@@ -982,9 +1018,7 @@ class LongOnlyDecisionPolicy:
             )
         elif 0 <= days <= horizon_days:
             status = CheckStatus.PARTIAL
-            description = (
-                f"次回決算予定まで{days}日です。分析期間内ですが警告表示にとどめます"
-            )
+            description = f"次回決算予定まで{days}日です。分析期間内ですが警告表示にとどめます"
         else:
             status = CheckStatus.EVALUATED
             description = f"次回決算予定まで{days}日です"

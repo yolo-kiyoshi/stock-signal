@@ -1096,6 +1096,8 @@ def list_analysis_universe(
         JOIN instruments i ON i.symbol = l.symbol AND i.provider = l.provider
         WHERE i.is_active = true
           AND i.sector_33_code IS NOT NULL
+          AND i.sector_33_code <> '9999'
+          AND i.instrument_type = 'stock'
         ORDER BY l.average_turnover DESC, i.symbol
         LIMIT :limit
         """
@@ -1167,6 +1169,21 @@ def clear_analysis_snapshots(
         return int(result.rowcount or 0)
 
 
+def replace_market_analysis_snapshots(database_url: str, records: list[dict]) -> None:
+    """両期間の候補を一つのトランザクションで差し替え、途中の空一覧を見せない。"""
+    if any(r["provider"] != "jquants" or r["horizon_days"] not in (5, 20) for r in records):
+        raise ValueError("全市場候補の対象期間・取得元が不正です")
+    with get_engine(database_url).begin() as connection:
+        connection.execute(
+            delete(analysis_snapshots).where(
+                analysis_snapshots.c.provider == "jquants",
+                analysis_snapshots.c.horizon_days.in_((5, 20)),
+            )
+        )
+        if records:
+            connection.execute(insert(analysis_snapshots), records)
+
+
 def list_market_candidates(
     database_url: str,
     *,
@@ -1229,6 +1246,7 @@ def list_market_candidates(
     for row in rows:
         analysis_data = row["analysis_json"] or {}
         transition = analysis_data.get("transition_readiness") or {}
+        research = analysis_data.get("research") or {}
         fallback_stage = {
             "buy_candidate": "entry_ready",
             "avoid_new_buy": "avoid",
@@ -1249,12 +1267,18 @@ def list_market_candidates(
                 "as_of_date": row["as_of_date"].isoformat(),
                 "direction": row["direction"],
                 "action": row["action"],
+                "technical_action": research.get("technical_action"),
+                "screening_status": (
+                    "needs_reanalysis"
+                    if analysis_data.get("research_stale")
+                    else research.get("screening_status", "unknown")
+                ),
+                "judgment_reason": analysis_data.get("summary"),
+                "financial_status": research.get("financials", {}).get("status", "missing"),
                 "evidence_score": row["evidence_score"],
                 "entry_stage": analysis_data.get("entry_stage", fallback_stage),
                 "entry_score": analysis_data.get("entry_score"),
-                "execution_risk_reward_ratio": analysis_data.get(
-                    "execution_risk_reward_ratio"
-                ),
+                "execution_risk_reward_ratio": analysis_data.get("execution_risk_reward_ratio"),
                 "market": row["market"],
                 "instrument_type": row["instrument_type"],
                 "sector_17_code": row["sector_17_code"],
@@ -1300,6 +1324,9 @@ def upsert_position(
     ):
         raise ValueError("保有数量と平均取得単価は0以上で指定してください")
     with get_engine(database_url).begin() as connection:
+        from stock_signal.research_store import invalidate_candidate_snapshots
+
+        invalidate_candidate_snapshots(connection)
         connection.execute(
             pg_insert(portfolios)
             .values(name=portfolio_name, base_currency="JPY")
@@ -1335,6 +1362,70 @@ def upsert_position(
                 },
             )
         )
+
+
+def bulk_upsert_positions(
+    database_url: str,
+    records: list[dict[str, object]],
+    portfolio_name: str = DEFAULT_PORTFOLIO,
+) -> int:
+    """検証済みの保有残高を一つのトランザクションで登録・更新する。"""
+    if not records:
+        return 0
+    for record in records:
+        quantity = record.get("quantity")
+        average_cost = record.get("average_cost")
+        if not isinstance(quantity, Decimal) or not quantity.is_finite() or quantity <= 0:
+            raise ValueError("保有数量は0より大きい有限値で指定してください")
+        if average_cost is not None and (
+            not isinstance(average_cost, Decimal)
+            or not average_cost.is_finite()
+            or average_cost < 0
+        ):
+            raise ValueError("平均取得単価は0以上の有限値で指定してください")
+
+    with get_engine(database_url).begin() as connection:
+        from stock_signal.research_store import invalidate_candidate_snapshots
+
+        invalidate_candidate_snapshots(connection)
+        connection.execute(
+            pg_insert(portfolios)
+            .values(name=portfolio_name, base_currency="JPY")
+            .on_conflict_do_nothing(index_elements=[portfolios.c.name])
+        )
+        portfolio_id = connection.scalar(
+            select(portfolios.c.id).where(portfolios.c.name == portfolio_name)
+        )
+        values = [
+            {
+                "portfolio_id": portfolio_id,
+                "symbol": str(record["symbol"]).strip().upper(),
+                "provider": str(record["provider"]),
+                "display_name": str(record["display_name"]),
+                "quantity": record["quantity"],
+                "average_cost": record.get("average_cost"),
+                "account_type": str(record.get("account_type") or "未設定")[:40],
+            }
+            for record in records
+        ]
+        statement = pg_insert(positions).values(values)
+        connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[
+                    positions.c.portfolio_id,
+                    positions.c.symbol,
+                    positions.c.provider,
+                ],
+                set_={
+                    "display_name": statement.excluded.display_name,
+                    "quantity": statement.excluded.quantity,
+                    "average_cost": statement.excluded.average_cost,
+                    "account_type": statement.excluded.account_type,
+                    "updated_at": func.now(),
+                },
+            )
+        )
+    return len(records)
 
 
 def list_positions(
@@ -1419,6 +1510,9 @@ def remove_position(
     portfolio_name: str = DEFAULT_PORTFOLIO,
 ) -> bool:
     with get_engine(database_url).begin() as connection:
+        from stock_signal.research_store import invalidate_candidate_snapshots
+
+        invalidate_candidate_snapshots(connection)
         portfolio_id = connection.scalar(
             select(portfolios.c.id).where(portfolios.c.name == portfolio_name)
         )
@@ -1682,9 +1776,7 @@ def save_market_regime_snapshot(
             "label": item.label,
             "value": Decimal(str(item.value)),
             "previous_value": (
-                Decimal(str(item.previous_value))
-                if item.previous_value is not None
-                else None
+                Decimal(str(item.previous_value)) if item.previous_value is not None else None
             ),
             "unit": item.unit,
             "available_at": available_at,
@@ -1730,9 +1822,7 @@ def save_market_regime_snapshot(
     )
     with get_engine(database_url).begin() as connection:
         if observation_values:
-            observation_statement = pg_insert(market_observations).values(
-                observation_values
-            )
+            observation_statement = pg_insert(market_observations).values(observation_values)
             connection.execute(
                 observation_statement.on_conflict_do_update(
                     index_elements=[
@@ -1777,12 +1867,8 @@ def load_latest_market_regime_snapshot(
     """指定日以前に保存された最新の寄り付き前環境を返す。"""
     statement = select(market_regime_snapshots)
     if on_or_before is not None:
-        statement = statement.where(
-            market_regime_snapshots.c.decision_date <= on_or_before
-        )
-    statement = statement.order_by(
-        market_regime_snapshots.c.decision_date.desc()
-    ).limit(1)
+        statement = statement.where(market_regime_snapshots.c.decision_date <= on_or_before)
+    statement = statement.order_by(market_regime_snapshots.c.decision_date.desc()).limit(1)
     with get_engine(database_url).connect() as connection:
         row = connection.execute(statement).mappings().one_or_none()
     if row is None:
@@ -1794,9 +1880,7 @@ def load_latest_market_regime_snapshot(
             observation_date=date.fromisoformat(item["observation_date"]),
             value=float(item["value"]),
             previous_value=(
-                float(item["previous_value"])
-                if item.get("previous_value") is not None
-                else None
+                float(item["previous_value"]) if item.get("previous_value") is not None else None
             ),
             unit=item["unit"],
             source=item["source"],
@@ -1831,6 +1915,8 @@ def load_latest_market_regime_snapshot(
 def reset_database(database_url: str) -> None:
     """テスト用に全業務テーブルを空へ戻し、既定値を再作成する。"""
     table_names = [
+        "financial_disclosures",
+        "portfolio_risk_settings",
         market_regime_snapshots.name,
         market_observations.name,
         bulk_files.name,

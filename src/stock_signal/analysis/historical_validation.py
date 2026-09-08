@@ -113,7 +113,9 @@ def calculate_realized_outcome(
     market_return = None
     excess_return = None
     if market_start is not None and market_target is not None:
-        market_start_close = float(market_start.close)
+        market_start_close = float(
+            market_start.open if entry_bar is not None else market_start.close
+        )
         market_return = (float(market_target.close) / market_start_close - 1) * 100
         excess_return = return_percent - market_return
 

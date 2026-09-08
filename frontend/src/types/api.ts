@@ -26,7 +26,43 @@ export type PositionItem = InstrumentListItem & {
   latest_trade_date: string | null;
 };
 
+export type RakutenImportResponse = {
+  status: "ready" | "saved";
+  source: "rakuten_asset_balance";
+  encoding: string;
+  summary: {
+    detail_rows: number;
+    domestic_rows: number;
+    parsed_symbols: number;
+    importable_symbols: number;
+    unmatched_symbols: number;
+    invalid_domestic_rows: number;
+    ignored_rows: number;
+    duplicate_rows: number;
+  };
+  positions: Array<{
+    symbol: string;
+    display_name: string;
+    csv_display_name: string;
+    quantity: string;
+    average_cost: string | null;
+    account_type: string;
+    source_rows: number;
+    status: "ready" | "master_missing";
+    message: string;
+  }>;
+  issues: Array<{ row_number: number; symbol: string | null; message: string }>;
+  skipped_types: Record<string, number>;
+  notices: string[];
+  saved_symbols?: number;
+  message?: string;
+};
+
 export type MarketCandidate = InstrumentListItem & {
+  technical_action?: string | null;
+  screening_status?: string;
+  judgment_reason?: string | null;
+  financial_status?: string;
   action: "buy_candidate" | "watch" | "avoid_new_buy";
   direction: "up" | "flat" | "down";
   evidence_score: number;
@@ -178,6 +214,7 @@ export type EquityCheck = {
 };
 
 export type AnalysisResponse = {
+  research?: ResearchAssessment | null;
   symbol: string;
   as_of_date: string;
   horizon_days: number;
@@ -221,4 +258,18 @@ export type AiReviewResponse = {
     citation?: { url: string; title: string };
   }>;
   notice: string;
+};
+
+export type ResearchAssessment = {
+  version: string;
+  financials: {
+    status: string; as_of_date: string; disclosed_date: string | null;
+    metrics: Record<string, number | string | null>; cautions: string[];
+    event_status: string; events: string[];
+  };
+  portfolio: {
+    status: string; max_shares: number | null; limits: Record<string, number>; cautions: string[];
+    topix_risk: { beta: number | null; correlation: number | null; observations: number };
+    correlations: Array<{ symbol: string; correlation: number | null; observations: number }>;
+  };
 };

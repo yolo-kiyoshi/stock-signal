@@ -15,7 +15,6 @@ from stock_signal.config import Settings, plan_history_start
 from stock_signal.database import (
     add_watchlist_item,
     bulk_sync_status,
-    clear_analysis_snapshots,
     daily_bar_quality,
     daily_batch_lock,
     data_sync_succeeded,
@@ -27,12 +26,13 @@ from stock_signal.database import (
     list_positions,
     list_watchlist_items,
     list_watchlist_registrations,
+    load_daily_bars,
     record_data_sync,
     record_pipeline_item,
     replace_earnings_calendar,
+    replace_market_analysis_snapshots,
     start_pipeline_run,
     update_watchlist_registration,
-    upsert_analysis_snapshot,
     upsert_daily_bars,
 )
 from stock_signal.domain.batch import BatchItemResult, BatchResult
@@ -101,9 +101,7 @@ class DailyBatchRunner:
         )
         self.today = today
         self.analysis_engine = RuleBasedAnalysisEngine(
-            decision_policy=LongOnlyDecisionPolicy(
-                jquants_plan=settings.jquants_plan
-            )
+            decision_policy=LongOnlyDecisionPolicy(jquants_plan=settings.jquants_plan)
         )
         self.analysis_service = AnalysisService(
             settings.database_url,
@@ -134,10 +132,17 @@ class DailyBatchRunner:
                     for item in list_positions(self.settings.database_url)
                 )
                 for symbol, provider_name in sorted(targets):
+                    if provider_name == "jquants":
+                        financial_result = self._sync_financials(symbol, providers)
+                        item_results.append(financial_result)
+                        record_pipeline_item(self.settings.database_url, run_id, financial_result)
                     result = self._process_item(symbol, provider_name, providers)
                     item_results.append(result)
                     record_pipeline_item(self.settings.database_url, run_id, result)
-                screen_result = self._screen_market()
+                screen_result = self._screen_market(
+                    providers,
+                    {symbol for symbol, provider in targets if provider == "jquants"},
+                )
                 item_results.append(screen_result)
                 record_pipeline_item(
                     self.settings.database_url,
@@ -150,9 +155,7 @@ class DailyBatchRunner:
                     run_id,
                     status,
                     {
-                        "succeeded": sum(
-                            item.status != "failed" for item in item_results
-                        ),
+                        "succeeded": sum(item.status != "failed" for item in item_results),
                         "failed": sum(item.status == "failed" for item in item_results),
                     },
                 )
@@ -165,6 +168,26 @@ class DailyBatchRunner:
                 )
                 raise
             return BatchResult(run_id, status, tuple(item_results))
+
+    def _sync_financials(
+        self, symbol: str, providers: dict[str, MarketDataProvider]
+    ) -> BatchItemResult:
+        """財務失敗を独立記録し、日足更新の継続を妨げない。"""
+        from stock_signal.research_store import sync_financials
+
+        try:
+            if "jquants" not in providers:
+                providers["jquants"] = self.provider_factory("jquants")
+            count = sync_financials(self.settings.database_url, providers["jquants"], symbol)
+            return BatchItemResult(
+                f"@FINS:{symbol}",
+                "jquants",
+                "success" if count else "no_updates",
+                received=count,
+                upserted=count,
+            )
+        except (MarketDataError, ValueError) as error:
+            return BatchItemResult(f"@FINS:{symbol}", "jquants", "failed", error_message=str(error))
 
     def _process_item(
         self,
@@ -223,13 +246,9 @@ class DailyBatchRunner:
             adjusted_only=provider == "jquants",
         )
         if provider == "jquants":
-            end = self.today() - timedelta(
-                days=self.settings.jquants_data_delay_days
-            )
+            end = self.today() - timedelta(days=self.settings.jquants_data_delay_days)
             history_dataset = self._history_dataset(symbol)
-            history_start = plan_history_start(
-                self.today(), self.settings.jquants_history_years
-            )
+            history_start = plan_history_start(self.today(), self.settings.jquants_history_years)
             earliest = earliest_daily_bar_date(
                 self.settings.database_url,
                 symbol,
@@ -248,25 +267,18 @@ class DailyBatchRunner:
                 quality_is_ready
                 and (
                     data_sync_succeeded(self.settings.database_url, history_dataset)
-                    or earliest and earliest <= history_start + timedelta(days=7)
+                    or earliest
+                    and earliest <= history_start + timedelta(days=7)
                 )
             )
-            start = (
-                latest + timedelta(days=1)
-                if latest
-                and history_is_complete
-                else history_start
-            )
+            start = latest + timedelta(days=1) if latest and history_is_complete else history_start
             return start, end
         end = self.today()
         start = latest + timedelta(days=1) if latest else self.today() - timedelta(days=140)
         return start, end
 
     def _history_dataset(self, symbol: str) -> str:
-        return (
-            f"jquants_history_{self.settings.jquants_history_years}y_"
-            f"{symbol.upper()}"
-        )
+        return f"jquants_history_{self.settings.jquants_history_years}y_{symbol.upper()}"
 
     def _record_history_sync(self, symbol: str, provider: str) -> None:
         if provider == "jquants":
@@ -280,9 +292,7 @@ class DailyBatchRunner:
         """日次実行時点の方向、投資検討区分、パターンを記録する。"""
         summary: dict[str, object] = {}
         for horizon in (5, 20):
-            analysis = self.analysis_service.analyze_symbol(
-                symbol, horizon, provider
-            )
+            analysis = self.analysis_service.analyze_symbol(symbol, horizon, provider)
             decision = analysis.investment_decision
             transition = analysis.transition_readiness
             summary[str(horizon)] = {
@@ -305,80 +315,142 @@ class DailyBatchRunner:
             }
         return summary
 
-    def _screen_market(self) -> BatchItemResult:
+    def _screen_market(
+        self,
+        providers: dict[str, MarketDataProvider] | None = None,
+        already_synced: set[str] | None = None,
+    ) -> BatchItemResult:
         """流動性上位の全市場銘柄をスイング・中長期基準で分析して保存する。"""
         try:
             universe = list_analysis_universe(
                 self.settings.database_url,
                 limit=self.settings.market_screening_limit,
             )
-            stored = 0
-            for horizon in (5, 20):
-                analyses = self.analysis_service.analyze_items(universe, horizon)
-                clear_analysis_snapshots(
-                    self.settings.database_url,
-                    provider="jquants",
-                    horizon_days=horizon,
+            from stock_signal.market_environment import (
+                apply_market_regime_gate,
+                latest_market_regime_for_analysis,
+            )
+            from stock_signal.research import ResearchInputs, enrich_analysis
+
+            providers = providers if providers is not None else {}
+            already_synced = already_synced or set()
+            preliminary = {
+                horizon: self.analysis_service.analyze_items(
+                    universe, horizon, include_research=False
                 )
+                for horizon in (5, 20)
+            }
+            shortlist = {
+                result.symbol
+                for analyses in preliminary.values()
+                for _, result in analyses
+                if result.investment_decision
+                and result.investment_decision.action.value == "buy_candidate"
+            }
+            financial_results = [
+                self._sync_financials(symbol, providers)
+                for symbol in sorted(shortlist - already_synced)
+            ]
+            inputs = ResearchInputs(self.settings.database_url)
+            stored = 0
+            snapshot_values = []
+            for horizon in (5, 20):
+                analyses = []
+                for name, technical in preliminary[horizon]:
+                    bars = load_daily_bars(
+                        self.settings.database_url, technical.symbol, provider="jquants"
+                    )
+                    result = enrich_analysis(
+                        self.settings.database_url,
+                        apply_market_regime_gate(
+                            technical,
+                            latest_market_regime_for_analysis(
+                                self.settings.database_url, bars[-1].trade_date if bars else None
+                            ),
+                        ),
+                        bars,
+                        provider="jquants",
+                        inputs=inputs,
+                        technical_action=technical.investment_decision.action.value,
+                    )
+                    analyses.append((name, result))
                 for (_, result), item in zip(analyses, universe, strict=True):
                     decision = result.investment_decision
                     transition = result.transition_readiness
                     if result.status != "ready" or not result.as_of_date or decision is None:
                         continue
-                    upsert_analysis_snapshot(
-                        self.settings.database_url,
-                        symbol=item.symbol,
-                        provider=item.provider,
-                        as_of_date=date.fromisoformat(result.as_of_date),
-                        horizon_days=horizon,
-                        direction=result.direction.value,
-                        action=decision.action.value,
-                        evidence_score=decision.evidence_score,
-                        analysis_json={
-                            "summary": decision.summary,
-                            "reasons": list(decision.reasons),
-                            "entry_stage": decision.entry_stage.value,
-                            "entry_score": decision.entry_score,
-                            "execution_stop_price": decision.execution_stop_price,
-                            "expected_target_price": decision.expected_target_price,
-                            "execution_risk_reward_ratio": (
-                                decision.execution_risk_reward_ratio
-                            ),
-                            "engine_id": result.engine_id,
-                            "engine_version": result.engine_version,
-                            "transition_readiness": (
-                                None
-                                if transition is None
-                                else {
-                                    "phase": transition.phase.value,
-                                    "satisfied_conditions": transition.satisfied_conditions,
-                                    "total_conditions": transition.total_conditions,
-                                    "readiness_score": transition.readiness_score,
-                                    "summary": transition.summary,
-                                    "next_condition": (
-                                        None
-                                        if transition.next_condition is None
-                                        else {
-                                            "label": transition.next_condition.label,
-                                            "description": transition.next_condition.description,
-                                        }
-                                    ),
-                                    "current_price": transition.current_price,
-                                    "trigger_price": transition.trigger_price,
-                                    "invalidation_price": transition.invalidation_price,
-                                    "target_price": transition.target_price,
-                                    "risk_reward_ratio": transition.risk_reward_ratio,
-                                }
-                            ),
-                        },
+                    snapshot_values.append(
+                        dict(
+                            symbol=item.symbol,
+                            provider=item.provider,
+                            as_of_date=date.fromisoformat(result.as_of_date),
+                            horizon_days=horizon,
+                            direction=result.direction.value,
+                            action=decision.action.value,
+                            evidence_score=decision.evidence_score,
+                            analysis_json={
+                                "research": result.research,
+                                "summary": decision.summary,
+                                "reasons": list(decision.reasons),
+                                "entry_stage": decision.entry_stage.value,
+                                "entry_score": decision.entry_score,
+                                "execution_stop_price": decision.execution_stop_price,
+                                "expected_target_price": decision.expected_target_price,
+                                "execution_risk_reward_ratio": (
+                                    decision.execution_risk_reward_ratio
+                                ),
+                                "engine_id": result.engine_id,
+                                "engine_version": result.engine_version,
+                                "transition_readiness": (
+                                    None
+                                    if transition is None
+                                    else {
+                                        "phase": transition.phase.value,
+                                        "satisfied_conditions": transition.satisfied_conditions,
+                                        "total_conditions": transition.total_conditions,
+                                        "readiness_score": transition.readiness_score,
+                                        "summary": transition.summary,
+                                        "next_condition": (
+                                            None
+                                            if transition.next_condition is None
+                                            else {
+                                                "label": transition.next_condition.label,
+                                                "description": (
+                                                    transition.next_condition.description
+                                                ),
+                                            }
+                                        ),
+                                        "current_price": transition.current_price,
+                                        "trigger_price": transition.trigger_price,
+                                        "invalidation_price": transition.invalidation_price,
+                                        "target_price": transition.target_price,
+                                        "risk_reward_ratio": transition.risk_reward_ratio,
+                                    }
+                                ),
+                            },
+                        )
                     )
                     stored += 1
+            replace_market_analysis_snapshots(self.settings.database_url, snapshot_values)
             return BatchItemResult(
                 "@SCREEN",
                 "rule_based",
-                "success" if stored else "no_updates",
+                (
+                    "failed"
+                    if any(r.status == "failed" for r in financial_results)
+                    else "success"
+                    if stored
+                    else "no_updates"
+                ),
                 received=len(universe),
                 upserted=stored,
+                analysis_summary={
+                    "technical_candidates": len(shortlist),
+                    "financial_syncs": len(financial_results),
+                    "financial_failures": [
+                        r.symbol for r in financial_results if r.status == "failed"
+                    ],
+                },
             )
         except ValueError as error:
             return BatchItemResult(
@@ -399,8 +471,7 @@ class DailyBatchRunner:
             provider = self.provider_factory("jquants")
             providers["jquants"] = provider
         if not (
-            hasattr(provider, "fetch_topix_prices")
-            and hasattr(provider, "fetch_earnings_calendar")
+            hasattr(provider, "fetch_topix_prices") and hasattr(provider, "fetch_earnings_calendar")
         ):
             return []
         reference_provider = provider  # 型検査用にProtocol契約として扱う
@@ -496,9 +567,7 @@ class DailyBatchRunner:
                 universe_provider,
                 start,
                 end,
-                history_start=plan_history_start(
-                    self.today(), self.settings.jquants_history_years
-                ),
+                history_start=plan_history_start(self.today(), self.settings.jquants_history_years),
                 refresh_completed=True,
             )
             results.append(
@@ -508,7 +577,9 @@ class DailyBatchRunner:
                     (
                         "failed"
                         if summary["failed"]
-                        else "success" if summary["rows"] else "no_updates"
+                        else "success"
+                        if summary["rows"]
+                        else "no_updates"
                     ),
                     received=summary["rows"],
                     upserted=summary["rows"],
@@ -532,37 +603,26 @@ class DailyBatchRunner:
 
     def _sync_topix(self, provider: LightPlanDataProvider) -> BatchItemResult:
         dataset = "jquants_topix"
-        history_dataset = (
-            f"jquants_topix_history_{self.settings.jquants_history_years}y"
-        )
+        history_dataset = f"jquants_topix_history_{self.settings.jquants_history_years}y"
         try:
-            latest = latest_daily_bar_date(
-                self.settings.database_url, "TOPIX", "jquants"
-            )
+            latest = latest_daily_bar_date(self.settings.database_url, "TOPIX", "jquants")
             end = self.today()
             start = (
                 min(
                     latest + timedelta(days=1),
                     end - timedelta(days=14),
                 )
-                if latest
-                and data_sync_succeeded(
-                    self.settings.database_url, history_dataset
-                )
+                if latest and data_sync_succeeded(self.settings.database_url, history_dataset)
                 else plan_history_start(end, self.settings.jquants_history_years)
             )
             if start > end:
                 record_data_sync(self.settings.database_url, dataset, "success")
-                record_data_sync(
-                    self.settings.database_url, history_dataset, "success"
-                )
+                record_data_sync(self.settings.database_url, history_dataset, "success")
                 return BatchItemResult("@TOPIX", "jquants", "no_updates")
             bars = list(provider.fetch_topix_prices(start=start, end=end))
             stored = upsert_daily_bars(self.settings.database_url, bars)
             record_data_sync(self.settings.database_url, dataset, "success")
-            record_data_sync(
-                self.settings.database_url, history_dataset, "success"
-            )
+            record_data_sync(self.settings.database_url, history_dataset, "success")
             return BatchItemResult(
                 "@TOPIX",
                 "jquants",
@@ -573,20 +633,14 @@ class DailyBatchRunner:
                 last_date=bars[-1].trade_date.isoformat() if bars else None,
             )
         except (MarketDataError, ValueError) as error:
-            record_data_sync(
-                self.settings.database_url, dataset, "failed", str(error)
-            )
-            return BatchItemResult(
-                "@TOPIX", "jquants", "failed", error_message=str(error)
-            )
+            record_data_sync(self.settings.database_url, dataset, "failed", str(error))
+            return BatchItemResult("@TOPIX", "jquants", "failed", error_message=str(error))
 
     def _sync_earnings(self, provider: LightPlanDataProvider) -> BatchItemResult:
         dataset = "jquants_earnings_calendar"
         try:
             announcements = list(provider.fetch_earnings_calendar())
-            stored = replace_earnings_calendar(
-                self.settings.database_url, announcements
-            )
+            stored = replace_earnings_calendar(self.settings.database_url, announcements)
             record_data_sync(self.settings.database_url, dataset, "success")
             return BatchItemResult(
                 "@EARNINGS",
@@ -596,22 +650,14 @@ class DailyBatchRunner:
                 upserted=stored,
             )
         except (MarketDataError, ValueError) as error:
-            record_data_sync(
-                self.settings.database_url, dataset, "failed", str(error)
-            )
-            return BatchItemResult(
-                "@EARNINGS", "jquants", "failed", error_message=str(error)
-            )
+            record_data_sync(self.settings.database_url, dataset, "failed", str(error))
+            return BatchItemResult("@EARNINGS", "jquants", "failed", error_message=str(error))
 
-    def _activate_pending_registrations(
-        self, providers: dict[str, MarketDataProvider]
-    ) -> None:
+    def _activate_pending_registrations(self, providers: dict[str, MarketDataProvider]) -> None:
         """証券コードを銘柄マスタで検証してウォッチリストへ昇格する。"""
         if not self.settings.jquants_api_key:
             return
-        pending = list_watchlist_registrations(
-            self.settings.database_url, statuses=("pending",)
-        )
+        pending = list_watchlist_registrations(self.settings.database_url, statuses=("pending",))
         for registration in pending:
             try:
                 provider = providers.get(registration.provider)
@@ -629,9 +675,7 @@ class DailyBatchRunner:
                         registration.symbol,
                         registration.provider,
                         "failed",
-                        error_message=(
-                            "J-Quants銘柄マスタに一致する証券コードがありません"
-                        ),
+                        error_message=("J-Quants銘柄マスタに一致する証券コードがありません"),
                         watchlist_name=registration.watchlist_name,
                     )
                     continue

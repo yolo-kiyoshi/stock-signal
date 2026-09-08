@@ -22,8 +22,8 @@ def _local_troughs(values: Sequence[float]) -> list[int]:
     return [
         index
         for index in range(2, len(values) - 2)
-        if values[index] == min(values[index - 2:index + 3])
-        and values[index - 2:index + 3].count(values[index]) == 1
+        if values[index] == min(values[index - 2 : index + 3])
+        and values[index - 2 : index + 3].count(values[index]) == 1
     ]
 
 
@@ -50,8 +50,7 @@ class TransitionReadinessEvaluator:
         ordered = tuple(sorted(bars, key=lambda bar: bar.trade_date))
         if len(ordered) < profile.minimum_bars:
             raise ValueError(
-                f"{profile.label}の転換準備度には"
-                f"{profile.minimum_bars}営業日以上の日足が必要です"
+                f"{profile.label}の転換準備度には{profile.minimum_bars}営業日以上の日足が必要です"
             )
         closes = [float(bar.close) for bar in ordered]
         lows = [float(bar.low) for bar in ordered]
@@ -66,8 +65,8 @@ class TransitionReadinessEvaluator:
         pattern_height = trigger_price - formation_low
         pattern_height_atr = pattern_height / risk_unit
 
-        recent_lows = lows[-profile.stability_lookback:]
-        low_position = recent_lows.index(min(recent_lows))
+        recent_lows = lows[-profile.stability_lookback :]
+        low_position = len(recent_lows) - 1 - recent_lows[::-1].index(min(recent_lows))
         days_since_low = len(recent_lows) - 1 - low_position
         stability = TransitionCondition(
             "low_stability",
@@ -75,11 +74,9 @@ class TransitionReadinessEvaluator:
             days_since_low >= profile.stability_days,
             True,
             (
-                f"{profile.stability_lookback}日安値から"
-                f"{days_since_low}営業日経過しています"
+                f"{profile.stability_lookback}日安値から{days_since_low}営業日経過しています"
                 if days_since_low
-                else f"本日{profile.stability_lookback}日安値を更新しており、"
-                "底固めを確認できません"
+                else f"本日{profile.stability_lookback}日安値を更新しており、底固めを確認できません"
             ),
             float(days_since_low),
             float(profile.stability_days),
@@ -89,12 +86,9 @@ class TransitionReadinessEvaluator:
         momentum_window = profile.recent_window
         average_window = profile.recent_average_window
         short_average = fmean(closes[-average_window:])
-        recent_momentum = (
-            closes[-1] - closes[-momentum_window - 1]
-        ) / risk_unit
+        recent_momentum = (closes[-1] - closes[-momentum_window - 1]) / risk_unit
         prior_momentum = (
-            closes[-momentum_window - 1]
-            - closes[-momentum_window * 2 - 1]
+            closes[-momentum_window - 1] - closes[-momentum_window * 2 - 1]
         ) / risk_unit
         short_trend_met = (
             current_close > short_average
@@ -130,10 +124,7 @@ class TransitionReadinessEvaluator:
             "転換水準への接近",
             near_trigger_met,
             True,
-            (
-                f"{trigger_name}{trigger_price:.2f}まで"
-                f"{distance_to_trigger_atr:+.2f} ATRです"
-            ),
+            (f"{trigger_name}{trigger_price:.2f}まで{distance_to_trigger_atr:+.2f} ATRです"),
             round(distance_to_trigger_atr, 2),
             self.maximum_below_trigger_atr,
             "ATR下以内",
@@ -164,8 +155,7 @@ class TransitionReadinessEvaluator:
             if baseline_volume > 0:
                 volume_ratio = ordered[-1].volume / baseline_volume
         initial_volume_confirmed = (
-            volume_ratio is not None
-            and volume_ratio >= self.initial_volume_ratio_threshold
+            volume_ratio is not None and volume_ratio >= self.initial_volume_ratio_threshold
         )
         initial_volume = TransitionCondition(
             "initial_volume",
@@ -183,9 +173,7 @@ class TransitionReadinessEvaluator:
             "倍以上",
         )
 
-        gap_atr = (
-            float(ordered[-1].open) - float(ordered[-2].close)
-        ) / risk_unit
+        gap_atr = (float(ordered[-1].open) - float(ordered[-2].close)) / risk_unit
         normal_gap = TransitionCondition(
             "normal_gap",
             "大きな窓開けがない",
@@ -208,9 +196,7 @@ class TransitionReadinessEvaluator:
         market_condition = self._market_condition(context, ordered, profile)
         if market_condition is not None:
             conditions.append(market_condition)
-        earnings_condition = self._earnings_condition(
-            context, ordered, profile
-        )
+        earnings_condition = self._earnings_condition(context, ordered, profile)
         if earnings_condition is not None:
             conditions.append(earnings_condition)
 
@@ -275,9 +261,9 @@ class TransitionReadinessEvaluator:
         for left, right in reversed(list(zip(troughs, troughs[1:], strict=False))):
             similarity = abs(lows[left] / lows[right] - 1)
             if 5 <= right - left <= 35 and similarity <= 0.05:
-                neckline = max(highs[left:right + 1])
+                neckline = max(highs[left : right + 1])
                 return neckline, "仮ネックライン", min(lows[left], lows[right])
-        recent = bars[-trigger_lookback - 1:-1]
+        recent = bars[-trigger_lookback - 1 : -1]
         return (
             max(float(bar.high) for bar in recent),
             f"直近{trigger_lookback}日高値",
@@ -290,14 +276,10 @@ class TransitionReadinessEvaluator:
         bars: Sequence[DailyBar],
         profile: HorizonProfile,
     ) -> TransitionCondition | None:
-        market = [
-            bar for bar in context.market_bars if bar.trade_date <= bars[-1].trade_date
-        ]
+        market = [bar for bar in context.market_bars if bar.trade_date <= bars[-1].trade_date]
         if len(market) <= profile.market_window:
             return None
-        change = float(
-            market[-1].close / market[-profile.market_window - 1].close - 1
-        ) * 100
+        change = float(market[-1].close / market[-profile.market_window - 1].close - 1) * 100
         return TransitionCondition(
             "market_environment",
             "市場環境",
@@ -368,9 +350,7 @@ class TransitionReadinessEvaluator:
         return TransitionPhase.FALLING
 
     @staticmethod
-    def _summary(
-        phase: TransitionPhase, unsatisfied: Sequence[TransitionCondition]
-    ) -> str:
+    def _summary(phase: TransitionPhase, unsatisfied: Sequence[TransitionCondition]) -> str:
         labels = {
             TransitionPhase.FALLING: "安値更新が続いており、転換待ちです",
             TransitionPhase.BOTTOMING: "安値更新は止まり、底固めを観察中です",

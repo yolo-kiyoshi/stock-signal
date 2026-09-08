@@ -287,3 +287,16 @@ def test_validate_range_loads_stock_and_market_data_only_once(monkeypatch) -> No
         result.event_started for point in points for result in point.results
     ) == 2
     assert progress == [(1, 11, dates[60]), (11, 11, dates[70])]
+
+
+def test_excess_return_matches_next_open_for_stock_and_topix():
+    dates = _business_dates(date(2026, 1, 5), 27)
+    history = [_bar(day, 100) for day in dates[:25]]
+    entry = _bar(dates[25], 100)
+    target = _bar(dates[26], 110)
+    market_entry = replace(_bar(dates[25], 2100, symbol="TOPIX"), open=Decimal('2000'))
+    market_target = _bar(dates[26], 2200, symbol="TOPIX")
+    outcome = calculate_realized_outcome(history, target, .5, entry_bar=entry,
+                                        market_start=market_entry, market_target=market_target)
+    assert outcome is not None
+    assert outcome.excess_return_percent == pytest.approx(0)

@@ -64,12 +64,21 @@ class PatternLifecycleEvaluator:
         breakout_close = float(bars[breakout_index].close)
         current_atr = wilder_atr(bars)
         breakout_atr = wilder_atr(bars, end=breakout_index)
-        fallback_atr = max(current_close * 0.01, 0.01)
-        risk_unit = breakout_atr or current_atr or fallback_atr
+        if breakout_atr is None or breakout_atr <= 0:
+            return None
+        risk_unit = breakout_atr
         direction_sign = 1 if pattern.direction is Direction.UP else -1
 
         formation_length = max(20, pattern.duration_days + 5)
-        formation = bars[max(0, breakout_index - formation_length):breakout_index]
+        formation = bars[max(0, breakout_index - formation_length) : breakout_index]
+        if pattern.formation_start and pattern.formation_end:
+            formation = [
+                bar
+                for bar in bars[:breakout_index]
+                if pattern.formation_start <= bar.trade_date.isoformat() <= pattern.formation_end
+            ]
+        if not formation:
+            return None
         if pattern.direction is Direction.UP:
             extreme = min(float(bar.low) for bar in formation)
             pattern_height = pattern.breakout_level - extreme
@@ -84,10 +93,16 @@ class PatternLifecycleEvaluator:
         else:
             extreme = max(float(bar.high) for bar in formation)
             pattern_height = extreme - pattern.breakout_level
-            invalidation_price = max(
-                extreme,
-                pattern.breakout_level + self.invalidation_atr * risk_unit,
-            ) + self.invalidation_buffer_atr * risk_unit
+            invalidation_price = (
+                max(
+                    extreme,
+                    pattern.breakout_level + self.invalidation_atr * risk_unit,
+                )
+                + self.invalidation_buffer_atr * risk_unit
+            )
+        pattern_height = (
+            pattern.pattern_height if pattern.pattern_height is not None else pattern_height
+        )
         if pattern_height <= 0:
             return None
         target_price = pattern.breakout_level + direction_sign * pattern_height
@@ -106,9 +121,7 @@ class PatternLifecycleEvaluator:
             if risk_unit > 0
             else None
         )
-        target_progress = (
-            direction_sign * (current_close - pattern.breakout_level) / pattern_height
-        )
+        target_progress = direction_sign * (current_close - pattern.breakout_level) / pattern_height
         remaining_reward = direction_sign * (target_price - current_close)
         current_risk = direction_sign * (current_close - invalidation_price)
         remaining_risk_reward_ratio = (
@@ -126,9 +139,7 @@ class PatternLifecycleEvaluator:
             )
         execution_risk = direction_sign * (current_close - execution_stop_price)
         execution_risk_reward_ratio = (
-            max(0.0, remaining_reward) / execution_risk
-            if execution_risk > 0
-            else None
+            max(0.0, remaining_reward) / execution_risk if execution_risk > 0 else None
         )
         three_day_base = float(bars[max(0, len(bars) - 4)].close)
         three_day_momentum_atr = (
@@ -148,51 +159,50 @@ class PatternLifecycleEvaluator:
             breakout_distance_atr is not None
             and breakout_distance_atr > self.maximum_entry_distance_atr
         ):
-            extension_reasons.append(
-                f"転換水準から{breakout_distance_atr:.2f} ATR離れています"
-            )
+            extension_reasons.append(f"転換水準から{breakout_distance_atr:.2f} ATR離れています")
         if target_progress >= self.maximum_target_progress:
-            extension_reasons.append(
-                f"想定値幅の{target_progress * 100:.0f}%を消化しています"
-            )
+            extension_reasons.append(f"想定値幅の{target_progress * 100:.0f}%を消化しています")
         if (
             three_day_momentum_atr is not None
             and three_day_momentum_atr > self.maximum_three_day_momentum_atr
         ):
-            extension_reasons.append(
-                f"3営業日で{three_day_momentum_atr:.2f} ATR進んでいます"
-            )
+            extension_reasons.append(f"3営業日で{three_day_momentum_atr:.2f} ATR進んでいます")
         if (
             distance_from_sma5_atr is not None
             and distance_from_sma5_atr > self.maximum_distance_from_sma5_atr
         ):
-            extension_reasons.append(
-                f"5日線から{distance_from_sma5_atr:.2f} ATR離れています"
-            )
+            extension_reasons.append(f"5日線から{distance_from_sma5_atr:.2f} ATR離れています")
         if (
             execution_risk_reward_ratio is not None
             and execution_risk_reward_ratio < self.minimum_execution_risk_reward_ratio
         ):
             extension_reasons.append(
-                "実行用リワード／リスクが"
-                f"{execution_risk_reward_ratio:.2f}です"
+                f"実行用リワード／リスクが{execution_risk_reward_ratio:.2f}です"
             )
         if (
             extension_reasons
             and remaining_risk_reward_ratio is not None
-            and remaining_risk_reward_ratio
-            < self.minimum_remaining_risk_reward_ratio
+            and remaining_risk_reward_ratio < self.minimum_remaining_risk_reward_ratio
         ):
-            extension_reasons.append(
-                "残存リワード／リスクが"
-                f"{remaining_risk_reward_ratio:.2f}です"
-            )
+            extension_reasons.append(f"残存リワード／リスクが{remaining_risk_reward_ratio:.2f}です")
 
-        if signed_invalidation_distance < 0:
+        terminal = None
+        # 確定足の翌日以降を順に追う。形成完了前の日中高安は到達とみなさない。
+        for bar in bars[breakout_index + 1 :]:
+            failed = direction_sign * (float(bar.close) - invalidation_price) < 0
+            reached = (
+                float(bar.high) >= target_price
+                if direction_sign == 1
+                else float(bar.low) <= target_price
+            )
+            if failed or reached:
+                terminal = "failed" if failed else "target"
+                break
+        if terminal == "failed" or (terminal is None and signed_invalidation_distance < 0):
             status = PatternLifecycleStatus.FAILED
             guidance = PatternGuidance.EXIT_REVIEW
-            summary = "終値が無効化水準を越えて戻り、ブレイクは失敗扱いです"
-        elif signed_target_distance >= 0:
+            summary = "検出後の終値が無効化水準を越えて逆行しました。失敗扱いを維持します"
+        elif terminal == "target" or signed_target_distance >= 0:
             status = PatternLifecycleStatus.TARGET_REACHED
             guidance = PatternGuidance.TAKE_PROFIT_REVIEW
             summary = "価格が形状の値幅から計算した目標水準へ到達しました"
@@ -200,10 +210,7 @@ class PatternLifecycleEvaluator:
             status = PatternLifecycleStatus.EXPIRED
             guidance = PatternGuidance.IGNORE_OLD_SIGNAL
             summary = "監視上限を過ぎたため、このパターンを新規判断へ使いません"
-        elif (
-            recent_momentum_atr is not None
-            and recent_momentum_atr <= -self.weakening_atr
-        ):
+        elif recent_momentum_atr is not None and recent_momentum_atr <= -self.weakening_atr:
             status = PatternLifecycleStatus.WEAKENING
             guidance = PatternGuidance.EXIT_REVIEW
             summary = "直近の値動きがパターン方向へ逆行しており、勢いが弱まっています"
@@ -235,7 +242,7 @@ class PatternLifecycleEvaluator:
             maximum_monitoring_days=self.maximum_monitoring_days,
             entry_days_remaining=(
                 0
-                if status is PatternLifecycleStatus.OVEREXTENDED
+                if status is not PatternLifecycleStatus.ENTRY_WINDOW
                 else max(0, self.entry_window_days - elapsed)
             ),
             current_close=round(current_close, 4),
@@ -243,9 +250,7 @@ class PatternLifecycleEvaluator:
             target_price=round(target_price, 4),
             invalidation_price=round(invalidation_price, 4),
             breakout_distance_atr=(
-                round(breakout_distance_atr, 2)
-                if breakout_distance_atr is not None
-                else None
+                round(breakout_distance_atr, 2) if breakout_distance_atr is not None else None
             ),
             target_progress_percent=round(target_progress * 100, 1),
             remaining_risk_reward_ratio=(
@@ -265,13 +270,9 @@ class PatternLifecycleEvaluator:
                 else None
             ),
             three_day_momentum_atr=(
-                round(three_day_momentum_atr, 2)
-                if three_day_momentum_atr is not None
-                else None
+                round(three_day_momentum_atr, 2) if three_day_momentum_atr is not None else None
             ),
             distance_from_sma5_atr=(
-                round(distance_from_sma5_atr, 2)
-                if distance_from_sma5_atr is not None
-                else None
+                round(distance_from_sma5_atr, 2) if distance_from_sma5_atr is not None else None
             ),
         )

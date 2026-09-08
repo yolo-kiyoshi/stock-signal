@@ -81,9 +81,7 @@ def _decode_bulk_file(content: bytes) -> str:
     try:
         return content.decode("utf-8-sig")
     except UnicodeDecodeError as error:
-        raise MarketDataResponseError(
-            "J-QuantsのバルクCSVをUTF-8として読み取れません"
-        ) from error
+        raise MarketDataResponseError("J-QuantsのバルクCSVをUTF-8として読み取れません") from error
 
 
 def _normalize_csv_column(column: str) -> str:
@@ -91,9 +89,7 @@ def _normalize_csv_column(column: str) -> str:
     return re.sub(r"[^a-z0-9]", "", column.strip().casefold())
 
 
-def _resolve_csv_column(
-    columns: Mapping[str, str], aliases: tuple[str, ...]
-) -> str | None:
+def _resolve_csv_column(columns: Mapping[str, str], aliases: tuple[str, ...]) -> str | None:
     """候補名のうちCSVに存在する実列名を返す。"""
     for alias in aliases:
         resolved = columns.get(_normalize_csv_column(alias))
@@ -155,9 +151,7 @@ class JQuantsProvider(MarketDataProvider):
             or not normalized_symbol.isalnum()
             or len(normalized_symbol) != 4
         ):
-            raise ValueError(
-                "J-Quantsの銘柄コードは4文字の半角英数字で指定してください"
-            )
+            raise ValueError("J-Quantsの銘柄コードは4文字の半角英数字で指定してください")
         if start and end and start > end:
             raise ValueError("開始日は終了日以前にしてください")
         params = {"code": normalized_symbol}
@@ -172,10 +166,7 @@ class JQuantsProvider(MarketDataProvider):
             try:
                 if not isinstance(record, Mapping):
                     raise TypeError("日足がオブジェクトではありません")
-                if any(
-                    record.get(field) is None
-                    for field in ("AdjO", "AdjH", "AdjL", "AdjC")
-                ):
+                if any(record.get(field) is None for field in ("AdjO", "AdjH", "AdjL", "AdjC")):
                     continue
                 trade_date = date.fromisoformat(str(record["Date"]))
                 if start and trade_date < start:
@@ -194,24 +185,16 @@ class JQuantsProvider(MarketDataProvider):
                         provider=self.provider_name,
                         is_adjusted=True,
                         raw_open=(
-                            Decimal(str(record["O"]))
-                            if record.get("O") is not None
-                            else None
+                            Decimal(str(record["O"])) if record.get("O") is not None else None
                         ),
                         raw_high=(
-                            Decimal(str(record["H"]))
-                            if record.get("H") is not None
-                            else None
+                            Decimal(str(record["H"])) if record.get("H") is not None else None
                         ),
                         raw_low=(
-                            Decimal(str(record["L"]))
-                            if record.get("L") is not None
-                            else None
+                            Decimal(str(record["L"])) if record.get("L") is not None else None
                         ),
                         raw_close=(
-                            Decimal(str(record["C"]))
-                            if record.get("C") is not None
-                            else None
+                            Decimal(str(record["C"])) if record.get("C") is not None else None
                         ),
                         raw_volume=(
                             int(Decimal(str(record["Vo"])))
@@ -270,24 +253,16 @@ class JQuantsProvider(MarketDataProvider):
                         provider=self.provider_name,
                         is_adjusted=True,
                         raw_open=(
-                            Decimal(str(record["O"]))
-                            if record.get("O") is not None
-                            else None
+                            Decimal(str(record["O"])) if record.get("O") is not None else None
                         ),
                         raw_high=(
-                            Decimal(str(record["H"]))
-                            if record.get("H") is not None
-                            else None
+                            Decimal(str(record["H"])) if record.get("H") is not None else None
                         ),
                         raw_low=(
-                            Decimal(str(record["L"]))
-                            if record.get("L") is not None
-                            else None
+                            Decimal(str(record["L"])) if record.get("L") is not None else None
                         ),
                         raw_close=(
-                            Decimal(str(record["C"]))
-                            if record.get("C") is not None
-                            else None
+                            Decimal(str(record["C"])) if record.get("C") is not None else None
                         ),
                         raw_volume=(
                             int(Decimal(str(record["Vo"])))
@@ -303,8 +278,7 @@ class JQuantsProvider(MarketDataProvider):
                 )
             except (KeyError, TypeError, ValueError, InvalidOperation) as error:
                 raise MarketDataResponseError(
-                    "J-Quantsの全市場日足データが不正です: "
-                    f"{record.get('Date', '日付不明')}"
+                    f"J-Quantsの全市場日足データが不正です: {record.get('Date', '日付不明')}"
                 ) from error
         return sorted(bars, key=lambda bar: (bar.trade_date, bar.symbol))
 
@@ -315,9 +289,7 @@ class JQuantsProvider(MarketDataProvider):
         code_query = query.upper()
         params = (
             {"code": code_query}
-            if len(code_query) in {4, 5}
-            and code_query.isascii()
-            and code_query.isalnum()
+            if len(code_query) in {4, 5} and code_query.isascii() and code_query.isalnum()
             else {}
         )
         records = self._request_all("/equities/master", params)
@@ -357,33 +329,37 @@ class JQuantsProvider(MarketDataProvider):
                     ListedInstrument(
                         symbol=code,
                         name=name,
-                        english_name=(
-                            str(record["CoNameEn"])
-                            if record.get("CoNameEn")
-                            else None
-                        ),
+                        english_name=(str(record["CoNameEn"]) if record.get("CoNameEn") else None),
                         market=str(record.get("MktNm") or "東京証券取引所"),
                         sector_17_code=(
-                            str(record["S17"])
-                            if record.get("S17") is not None
-                            else None
+                            str(record["S17"]) if record.get("S17") is not None else None
                         ),
-                        sector_17_name=(
-                            str(record["S17Nm"])
-                            if record.get("S17Nm")
-                            else None
-                        ),
+                        sector_17_name=(str(record["S17Nm"]) if record.get("S17Nm") else None),
                         sector_33_code=(
-                            str(record["S33"])
-                            if record.get("S33") is not None
-                            else None
+                            str(record["S33"]) if record.get("S33") is not None else None
                         ),
-                        sector_33_name=(
-                            str(record["S33Nm"])
-                            if record.get("S33Nm")
-                            else None
+                        sector_33_name=(str(record["S33Nm"]) if record.get("S33Nm") else None),
+                        instrument_type=(
+                            {
+                                "011": "stock",
+                                "012": "preferred",
+                                "013": "reit",
+                                "014": "etf",
+                                "021": "foreign_stock",
+                                "022": "reit",
+                                "023": "etf",
+                                "024": "depositary_receipt",
+                            }.get(str(record.get("ProdCat")), "unknown")
+                            if record.get("ProdCat")
+                            else str(
+                                record.get("Type")
+                                or (
+                                    "stock"
+                                    if record.get("S33") not in (None, "", "9999")
+                                    else "unknown"
+                                )
+                            )
                         ),
-                        instrument_type=str(record.get("Type") or "stock"),
                         as_of_date=as_of,
                     )
                 )
@@ -446,9 +422,7 @@ class JQuantsProvider(MarketDataProvider):
             dialect = csv.excel
         rows = csv.DictReader(io.StringIO(decoded), dialect=dialect)
         if not rows.fieldnames:
-            raise MarketDataResponseError(
-                "J-QuantsのバルクCSVにヘッダーがありません"
-            )
+            raise MarketDataResponseError("J-QuantsのバルクCSVにヘッダーがありません")
         columns = {
             _normalize_csv_column(column): column
             for column in rows.fieldnames
@@ -466,9 +440,7 @@ class JQuantsProvider(MarketDataProvider):
             "high": _resolve_csv_column(
                 columns, ("AdjH", "AdjHigh", "AdjustmentHigh", "AdjustedHigh")
             ),
-            "low": _resolve_csv_column(
-                columns, ("AdjL", "AdjLow", "AdjustmentLow", "AdjustedLow")
-            ),
+            "low": _resolve_csv_column(columns, ("AdjL", "AdjLow", "AdjustmentLow", "AdjustedLow")),
             "close": _resolve_csv_column(
                 columns, ("AdjC", "AdjClose", "AdjustmentClose", "AdjustedClose")
             ),
@@ -488,19 +460,12 @@ class JQuantsProvider(MarketDataProvider):
             columns,
             ("AdjFactor", "AdjustmentFactor", "Factor"),
         )
-        has_adjusted_ohlc = all(
-            adjusted_columns[key] for key in ("open", "high", "low", "close")
-        )
+        has_adjusted_ohlc = all(adjusted_columns[key] for key in ("open", "high", "low", "close"))
         has_raw_ohlc = all(raw_columns[key] for key in ("open", "high", "low", "close"))
-        if (
-            code_column is None
-            or date_column is None
-            or not (has_adjusted_ohlc or has_raw_ohlc)
-        ):
+        if code_column is None or date_column is None or not (has_adjusted_ohlc or has_raw_ohlc):
             actual_columns = ", ".join(rows.fieldnames)
             raise MarketDataResponseError(
-                "J-QuantsのバルクCSVに日足の必須列がありません: "
-                f"{actual_columns}"
+                f"J-QuantsのバルクCSVに日足の必須列がありません: {actual_columns}"
             )
         bars = []
         source_rows = 0
@@ -529,9 +494,7 @@ class JQuantsProvider(MarketDataProvider):
                         low=Decimal(str(row[price_columns["low"]])),
                         close=Decimal(str(row[price_columns["close"]])),
                         volume=int(
-                            Decimal(str(row.get(volume_column) or 0))
-                            if volume_column
-                            else 0
+                            Decimal(str(row.get(volume_column) or 0)) if volume_column else 0
                         ),
                         provider=self.provider_name,
                         is_adjusted=has_adjusted_ohlc,
@@ -569,13 +532,11 @@ class JQuantsProvider(MarketDataProvider):
                 )
             except (KeyError, TypeError, ValueError, InvalidOperation) as error:
                 raise MarketDataResponseError(
-                    "J-Quantsのバルク日足が不正です: "
-                    f"{row.get(date_column, '日付不明')}"
+                    f"J-Quantsのバルク日足が不正です: {row.get(date_column, '日付不明')}"
                 ) from error
         if not bars:
             raise MarketDataResponseError(
-                "J-QuantsのバルクCSVから有効な日足を読み取れませんでした"
-                f"（CSV行数: {source_rows}）"
+                f"J-QuantsのバルクCSVから有効な日足を読み取れませんでした（CSV行数: {source_rows}）"
             )
         return sorted(bars, key=lambda bar: (bar.trade_date, bar.symbol))
 
@@ -599,22 +560,36 @@ class JQuantsProvider(MarketDataProvider):
                 if not isinstance(record, Mapping):
                     raise TypeError("TOPIX日足がオブジェクトではありません")
                 trade_date = date.fromisoformat(str(record["Date"]))
-                bars.append(DailyBar(
-                    symbol="TOPIX",
-                    trade_date=trade_date,
-                    open=Decimal(str(record["O"])),
-                    high=Decimal(str(record["H"])),
-                    low=Decimal(str(record["L"])),
-                    close=Decimal(str(record["C"])),
-                    volume=0,
-                    provider=self.provider_name,
-                    is_adjusted=False,
-                ))
+                bars.append(
+                    DailyBar(
+                        symbol="TOPIX",
+                        trade_date=trade_date,
+                        open=Decimal(str(record["O"])),
+                        high=Decimal(str(record["H"])),
+                        low=Decimal(str(record["L"])),
+                        close=Decimal(str(record["C"])),
+                        volume=0,
+                        provider=self.provider_name,
+                        is_adjusted=False,
+                    )
+                )
             except (KeyError, TypeError, ValueError, InvalidOperation) as error:
                 raise MarketDataResponseError(
                     f"J-QuantsのTOPIX日足が不正です: {record.get('Date', '日付不明')}"
                 ) from error
         return sorted(bars, key=lambda bar: bar.trade_date)
+
+    def fetch_financial_summaries(self, symbol: str) -> list[dict]:
+        """Lightの銘柄指定APIから財務開示履歴を取得する。"""
+        from stock_signal.fundamentals import normalize_summary
+
+        try:
+            return [
+                normalize_summary(dict(row))
+                for row in self._request_all("/fins/summary", {"code": symbol})
+            ]
+        except (ValueError, TypeError) as error:
+            raise MarketDataResponseError("財務サマリーの形式が不正です") from error
 
     def fetch_earnings_calendar(self) -> list[EarningsAnnouncement]:
         """全プランで利用可能な決算発表予定日を取得する。"""
@@ -625,20 +600,20 @@ class JQuantsProvider(MarketDataProvider):
                 if not isinstance(record, Mapping):
                     raise TypeError("決算予定がオブジェクトではありません")
                 symbol = _display_code(str(record["Code"]))
-                announcements.append(EarningsAnnouncement(
-                    symbol=symbol,
-                    scheduled_date=date.fromisoformat(str(record["Date"])),
-                    company_name=str(record.get("CoName", symbol)),
-                    fiscal_year=str(record["FY"]) if record.get("FY") else None,
-                    fiscal_quarter=str(record["FQ"]) if record.get("FQ") else None,
-                ))
+                announcements.append(
+                    EarningsAnnouncement(
+                        symbol=symbol,
+                        scheduled_date=date.fromisoformat(str(record["Date"])),
+                        company_name=str(record.get("CoName", symbol)),
+                        fiscal_year=str(record["FY"]) if record.get("FY") else None,
+                        fiscal_quarter=str(record["FQ"]) if record.get("FQ") else None,
+                    )
+                )
             except (KeyError, TypeError, ValueError) as error:
                 raise MarketDataResponseError(
                     f"J-Quantsの決算予定データが不正です: {record}"
                 ) from error
-        return sorted(
-            announcements, key=lambda item: (item.scheduled_date, item.symbol)
-        )
+        return sorted(announcements, key=lambda item: (item.scheduled_date, item.symbol))
 
     def _request_all(self, path: str, params: Mapping[str, str]) -> list[Mapping[str, Any]]:
         query = dict(params)
@@ -656,9 +631,7 @@ class JQuantsProvider(MarketDataProvider):
 
     def _request(self, path: str, params: Mapping[str, str]) -> Mapping[str, Any]:
         if not self._api_key:
-            raise MarketDataAuthenticationError(
-                "JQUANTS_API_KEYを.envに設定してください"
-            )
+            raise MarketDataAuthenticationError("JQUANTS_API_KEYを.envに設定してください")
         for attempt in range(self._max_retries + 1):
             self._wait_for_rate_limit()
             try:
@@ -679,9 +652,7 @@ class JQuantsProvider(MarketDataProvider):
                     if attempt < self._max_retries:
                         self._sleep(60)
                         continue
-                    raise MarketDataRateLimitError(
-                        "J-Quantsのアクセス上限に達しました"
-                    ) from error
+                    raise MarketDataRateLimitError("J-Quantsのアクセス上限に達しました") from error
                 if (
                     error.status_code is not None
                     and error.status_code >= 500
@@ -689,18 +660,13 @@ class JQuantsProvider(MarketDataProvider):
                 ):
                     self._sleep(2**attempt)
                     continue
-                if (
-                    error.status_code is not None
-                    and 400 <= error.status_code < 500
-                ):
+                if error.status_code is not None and 400 <= error.status_code < 500:
                     raise MarketDataResponseError(
                         f"J-Quantsがリクエストを拒否しました: {error}"
                     ) from error
                 raise MarketDataTransportError(str(error)) from error
             if not isinstance(payload, Mapping):
-                raise MarketDataResponseError(
-                    "J-QuantsがJSONオブジェクト以外を返しました"
-                )
+                raise MarketDataResponseError("J-QuantsがJSONオブジェクト以外を返しました")
             if payload.get("message") and "data" not in payload:
                 raise MarketDataResponseError(f"J-Quants取得エラー: {payload['message']}")
             return payload

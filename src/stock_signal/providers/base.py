@@ -47,6 +47,10 @@ class MarketDataProvider(ABC):
     ) -> list[DailyBar]:
         """取得可能な日足を取引日の昇順で返す。"""
 
+    def fetch_financial_summaries(self, symbol: str) -> list[dict]:
+        """対応していない取得元は財務情報を返さない。"""
+        return []
+
     @abstractmethod
     def search_symbols(self, keywords: str) -> list[SymbolMatch]:
         """企業名または銘柄記号に一致する取得元固有銘柄を返す。"""

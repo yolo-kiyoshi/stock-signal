@@ -49,7 +49,7 @@ class RuleBasedMarketRegimeEngine:
         usable = {
             key: item
             for key, item in by_key.items()
-            if (decision_at.date() - item.observation_date).days <= 4
+            if 0 <= (decision_at.astimezone(JST).date() - item.observation_date).days <= 4
         }
         cautions = [
             f"{item.label}は{item.observation_date.isoformat()}時点のためスコアから除外しました"
