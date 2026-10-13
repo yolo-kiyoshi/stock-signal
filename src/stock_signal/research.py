@@ -54,7 +54,11 @@ def enrich_analysis(
         if provider == "jquants"
         else []
     )
-    reports = [r for r in records if "FinancialStatements" in r["DocType"]]
+    reports = [
+        r
+        for r in records
+        if "FinancialStatements" in r["DocType"] and r["DiscDate"] < decision_date.isoformat()
+    ]
     report = max(
         reports,
         key=lambda r: (r.get("CurPerEn", ""), r["DiscDate"], r.get("DiscTime", ""), r["DiscNo"]),
@@ -79,13 +83,24 @@ def enrich_analysis(
         if financials["status"] == "reviewed":
             financials["status"] = "partial"
         financials["cautions"].append("財務の同期が未完了・失敗または4日超未更新です")
+        financials["issues"].insert(
+            0,
+            {
+                "category": "data_pending",
+                "message": "財務データの取得が未完了・失敗または4日超未更新です。"
+                "財務データを再取得してください",
+            },
+        )
     decision = result.investment_decision
     technical_action = technical_action or (
         decision.action.value if decision else "insufficient_data"
     )
     reasons = []
     if result.horizon_days == 20 and financials["status"] != "reviewed":
-        reasons.append("中長期の企業品質・業績・評価倍率の確認が完了していません")
+        reasons.extend(issue["message"] for issue in financials["issues"])
+        reasons.extend(financials["cautions"] if financials["status"] == "caution" else [])
+        if not reasons:
+            reasons.append("中長期の企業品質・業績・評価倍率の確認が完了していません")
     if financials["event_status"] == "hold":
         reasons.extend(financials["events"])
     if (date.today() - as_of).days > 4:
@@ -178,14 +193,22 @@ def enrich_analysis(
         if decision and decision.action == InvestmentAction.BUY_CANDIDATE:
             screening_status = "candidate"
         elif result.horizon_days == 20 and financials["status"] in {"missing", "partial", "stale"}:
-            screening_status = "data_pending"
+            categories = {issue["category"] for issue in financials["issues"]}
+            screening_status = next(
+                (
+                    category
+                    for category in ("data_pending", "review_required", "metrics_missing")
+                    if category in categories
+                ),
+                "review_required",
+            )
         else:
             screening_status = "risk_hold"
     return replace(
         result,
         investment_decision=decision,
         research={
-            "version": "light-research-v2",
+            "version": "light-research-v3",
             "financials": financials,
             "portfolio": sizing,
             "technical_action": technical_action,

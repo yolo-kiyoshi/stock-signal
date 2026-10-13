@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } 
 import type { FormEvent } from "react";
 
 import { ResearchPanel } from "@/components/research-panel";
+import { EntryDiagnosticsView, entryStrategyLabels } from "@/components/entry-diagnostics";
 import { PriceChart } from "@/components/price-chart";
 import type {
   AiReviewResponse,
@@ -85,7 +86,7 @@ const horizonProfiles = {
     label: "スイング",
     future: "5営業日先",
     holding: "数日〜数週間の新規購入タイミング",
-    purpose: "転換初動とブレイク後の継続性を確認",
+    purpose: "ブレイク追随と押し目反発を別々に確認",
     caution: "企業価値は評価しません。出来高と無効化水準も確認してください。",
   },
   20: {
@@ -154,6 +155,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const [horizon, setHorizon] = useState<5 | 20>(5);
   const [candidateHorizon, setCandidateHorizon] = useState<5 | 20>(5);
   const [query, setQuery] = useState("");
+  const [pagination, setPagination] = useState({ key: "", page: 0 });
   const [candidateAction, setCandidateAction] = useState<CandidateAction>("all");
   const [listFilters, setListFilters] = useState<ListFilters>(defaultListFilters);
   const [selected, setSelected] = useState<NavItem | null>(firstInstrument);
@@ -163,6 +165,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     movingAverage: true,
     rsi: true,
     resistance: true,
+    support: true,
   });
   const [bars, setBars] = useState<DailyBarsResponse | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -183,6 +186,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const [aiError, setAiError] = useState<string | null>(null);
 
   const candidateItems = data.candidates[String(candidateHorizon) as "5" | "20"];
+  const candidateHoldReasons = Object.entries(candidateItems.reduce<Record<string, number>>((counts, item) => {
+    if (item.action !== "buy_candidate") {
+      const reason = item.judgment_reason || "条件未充足・詳細を確認してください";
+      counts[reason] = (counts[reason] ?? 0) + 1;
+    }
+    return counts;
+  }, {})).sort((left, right) => right[1] - left[1]).slice(0, 3);
   const actionFilteredCandidates = candidateAction === "all"
     ? candidateItems
     : candidateItems.filter((item) => item.action === candidateAction);
@@ -223,6 +233,10 @@ export function DashboardShell({ data }: { data: DashboardData }) {
       return true;
     });
   }, [activeItems, listFilters, query]);
+  const pageKey = JSON.stringify([tab, candidateHorizon, candidateAction, query, listFilters]);
+  const pageCount = Math.max(1, Math.ceil(filteredItems.length / 100));
+  const currentPage = pagination.key === pageKey ? Math.min(pagination.page, pageCount - 1) : 0;
+  const visibleItems = filteredItems.slice(currentPage * 100, (currentPage + 1) * 100);
   const activeFilterCount = Object.values(listFilters).filter((value) => value !== "all").length;
   const hasListConstraints = activeFilterCount > 0 || query.trim().length > 0
     || (tab === "candidates" && candidateAction !== "all");
@@ -659,9 +673,16 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               <dl className="candidate-summary" aria-label="絞り込み前の候補件数">
                 <div><dt>テクニカル通過</dt><dd>{candidateItems.filter((item) => item.technical_action === "buy_candidate").length}<small>件</small></dd></div>
                 <div className="candidate-summary-buy"><dt>購入候補</dt><dd>{candidateItems.filter((item) => item.action === "buy_candidate").length}<small>件</small></dd></div>
-                <div><dt>財務確認待ち</dt><dd>{candidateItems.filter((item) => item.screening_status === "data_pending").length}<small>件</small></dd></div>
+                {Object.entries({ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }).map(([status, label]) => <div key={status}><dt>{label}</dt><dd>{candidateItems.filter((item) => item.screening_status === status).length}<small>件</small></dd></div>)}
                 <div><dt>リスク保留</dt><dd>{candidateItems.filter((item) => item.screening_status === "risk_hold").length}<small>件</small></dd></div>
               </dl>
+              {candidateItems.length > 0 && !candidateItems.some((item) => item.action === "buy_candidate") && (
+                <details className="candidate-refresh-note">
+                  <summary>購入候補0件の理由（{candidateItems.length}銘柄を分析済み）</summary>
+                  <p>表示日の条件を満たす銘柄がありません。過去日の候補は含めていません。</p>
+                  <ul>{candidateHoldReasons.map(([reason, count]) => <li key={reason}>{reason}：{count}件</li>)}</ul>
+                </details>
+              )}
               <div className="candidate-horizon">
                 <span>候補の分析軸</span>
                 <div role="group" aria-label="分析候補の運用スタイル">
@@ -701,9 +722,16 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 onClick={clearListConstraints}>絞り込みを解除</button>
             </div>
           </div>
+          {pageCount > 1 && <nav className="list-results-toolbar" aria-label="銘柄一覧のページ切り替え">
+            <button type="button" className="list-tool-button" disabled={currentPage === 0}
+              onClick={() => setPagination({ key: pageKey, page: currentPage - 1 })}>前へ</button>
+            <span role="status">{currentPage + 1} / {pageCount}ページ（100件ずつ）</span>
+            <button type="button" className="list-tool-button" disabled={currentPage + 1 >= pageCount}
+              onClick={() => setPagination({ key: pageKey, page: currentPage + 1 })}>次へ</button>
+          </nav>}
           {sidebarMessage && <p className="sidebar-message" aria-live="polite">{sidebarMessage}</p>}
-          <div className="instrument-list">
-            {filteredItems.map((item) => {
+          <div className={`instrument-list${tab === "candidates" ? " candidate-list" : ""}`}>
+            {visibleItems.map((item) => {
               const watched = watchedSymbols.has(`${item.provider}:${item.symbol}`);
               return (
                 <div className="instrument-row" key={`${item.provider}-${item.symbol}`}>
@@ -727,9 +755,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                         <em className={item.liquidity_rank === "low" ? "tag-caution" : ""} title={item.median_turnover ? `直近60日売買代金中央値 ${Number(item.median_turnover).toLocaleString("ja-JP")}円` : "直近の分析結果に基づく流動性区分"}>{liquidityLabels[item.liquidity_rank ?? "unknown"]}</em>
                         <em className={item.freshness_status === "fresh" ? "tag-fresh" : "tag-caution"} title={item.latest_trade_date ? `最新日足 ${item.latest_trade_date}` : "日足データがありません"}>{freshnessTag(item)}</em>
                       </span>
+                      {tab === "candidates" && <>
+                        <span className="candidate-strategy">{item.entry_strategy ? entryStrategyLabels[item.entry_strategy] ?? "判定経路未確認" : "判定経路未算出"}</span>
+                        <EntryDiagnosticsView diagnostics={item.entry_diagnostics} asOfDate={item.as_of_date ?? "未生成"} />
+                      </>}
                     </span>
                     <span className="instrument-status">
-                    {item.screening_status === "data_pending" && <small className="pending-label">財務確認待ち</small>}
+                    {["data_pending", "metrics_missing", "review_required"].includes(item.screening_status ?? "") && <small className="pending-label">{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[item.screening_status as string]}</small>}
                     {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
                     </span>
                   </button>
@@ -820,7 +852,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                   {(Object.keys(rangeLabels) as ChartRange[]).map((range) => <button type="button" key={range} className={!customRange && chartRange === range ? "active" : ""} onClick={() => switchChartRange(range)}>{rangeLabels[range]}</button>)}
                 </div>
                 <div className="indicator-switches" aria-label="テクニカル指標">
-                  {([["movingAverage", "移動平均線"], ["rsi", "RSI"], ["resistance", "抵抗帯"]] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={indicators[key]} onChange={(event) => setIndicators((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>)}
+                  {([["movingAverage", "移動平均線"], ["rsi", "RSI"], ["resistance", "抵抗帯"], ["support", "支持帯"]] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={indicators[key]} onChange={(event) => setIndicators((current) => ({ ...current, [key]: event.target.checked }))} />{label}</label>)}
                 </div>
                 <details className="custom-range-control"><summary>日付を指定</summary><form onSubmit={applyCustomRange}><label>開始日<input type="date" name="from" defaultValue={bars.range.from} /></label><label>終了日<input type="date" name="to" defaultValue={bars.range.to} /></label><button type="submit">適用</button></form></details>
               </div>
@@ -835,12 +867,14 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               <article className={`entry-stage-card entry-${decision?.entry_stage ?? "not_applicable"}`}>
                 <span className="eyebrow">今の買い準備</span>
                 <strong>{decision?.entry_stage_label ?? "未評価"}</strong>
+                {decision?.entry_strategy && <small>{entryStrategyLabels[decision.entry_strategy] ?? "判定経路未確認"}</small>}
                 <div className="execution-metrics">
                   <span>形の強さ <b>{decision?.setup_score?.toFixed(1) ?? "—"}</b></span>
                   <span>買い条件 <b>{decision?.entry_score?.toFixed(1) ?? "—"}</b></span>
                   <span>実行R/R <b>{decision?.execution_risk_reward_ratio?.toFixed(2) ?? "—"}</b></span>
                 </div>
                 <small>上昇形状と「今買う条件」を別々に評価しています。</small>
+                <EntryDiagnosticsView diagnostics={analysis.entry_diagnostics} asOfDate={analysis.as_of_date} />
               </article>
               <article className={`direction-card direction-${analysis.direction}`}>
                 <span className="eyebrow">現在のテクニカル方向</span><strong>{directionLabels[analysis.direction]}</strong><div className="score-row">{(["up", "flat", "down"] as const).map((direction) => <span key={direction}>{directionLabels[direction]} {analysis.scores[direction].toFixed(1)}</span>)}</div><small>価格の向きであり、投資検討区分とは異なります・{analysis.as_of_date}</small>
@@ -854,6 +888,15 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 <div className="section-heading"><div><span className="eyebrow">条件進捗</span><h3>{stage.phase_label}</h3></div><strong>{stage.satisfied_conditions} / {stage.total_conditions}</strong></div><p>{stage.summary}</p>
                 <ul className="condition-list">{stage.conditions.map((condition) => <li key={condition.key} className={condition.satisfied ? "satisfied" : "pending"}><span aria-hidden="true">{condition.satisfied ? "✓" : "○"}</span><div><strong>{condition.label}</strong><p>{condition.description}</p></div></li>)}</ul>
 
+              </section>
+            )}
+
+            {analysis.swing_pullback && (
+              <section className="stage-card">
+                <div className="section-heading"><div><span className="eyebrow">ブレイクとは独立した確認</span><h3>スイングの押し目反発</h3></div><strong>{analysis.swing_pullback.satisfied_conditions} / {analysis.swing_pullback.total_conditions}</strong></div>
+                <p>{analysis.swing_pullback.summary}</p>
+                <p>形の確認後も、抵抗までのR/R・地合い・決算・現在足の窓開けを確認します。達成率は上昇確率ではありません。</p>
+                <ul className="condition-list">{analysis.swing_pullback.conditions.map((condition) => <li key={condition.key} className={condition.satisfied ? "satisfied" : "pending"}><span aria-hidden="true">{condition.satisfied ? "✓" : "○"}</span><div><strong>{condition.label}</strong><p>{condition.description}</p></div></li>)}</ul>
               </section>
             )}
 

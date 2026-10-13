@@ -105,7 +105,7 @@ class TransitionPhase(StrEnum):
 
 
 class PositionEntryPhase(StrEnum):
-    """中長期ポジションを開始する前の押し目評価段階。"""
+    """ポジションを開始する前の押し目評価段階。"""
 
     PULLBACK_CANDIDATE = "pullback_candidate"
     SUPPORT_TEST = "support_test"
@@ -199,7 +199,7 @@ class TransitionReadiness:
 
 @dataclass(frozen=True, slots=True)
 class PositionSupportLevel:
-    """中長期の押し目評価に使う一つの支持候補。"""
+    """押し目評価に使う一つの支持候補。"""
 
     key: str
     label: str
@@ -215,7 +215,7 @@ class PositionSupportLevel:
 
 @dataclass(frozen=True, slots=True)
 class PositionEntryCondition:
-    """中長期の押し目候補に必要な確認条件。"""
+    """押し目候補に必要な確認条件。"""
 
     key: str
     label: str
@@ -271,6 +271,28 @@ class InvestmentDecision:
     execution_stop_price: float | None = None
     expected_target_price: float | None = None
     execution_risk_reward_ratio: float | None = None
+    entry_strategy: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EntryDiagnostics:
+    """分析基準日の価格位置とリスク幅。予測値や確率ではない。"""
+
+    current_price: float
+    atr: float | None
+    sma20_distance_percent: float | None
+    sma20_distance_atr: float | None
+    return_10d_percent: float | None
+    return_20d_percent: float | None
+    rise_20d_atr: float | None
+    resistance_status: str
+    resistance_price: float | None
+    resistance_room_percent: float | None
+    resistance_room_atr: float | None
+    stop_price: float | None
+    stop_width_percent: float | None
+    stop_width_atr: float | None
+    resistance_risk_reward_ratio: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +338,8 @@ class AnalysisResult:
     investment_decision: InvestmentDecision | None = None
 
     research: dict | None = None
+    swing_pullback: PositionEntryAssessment | None = None
+    entry_diagnostics: EntryDiagnostics | None = None
 
     @property
     def winning_score(self) -> float:

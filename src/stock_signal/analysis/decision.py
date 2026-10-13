@@ -265,6 +265,7 @@ class LongOnlyDecisionPolicy:
         position_entry: PositionEntryAssessment | None,
         checks: Sequence[EquityCheck],
         horizon_days: int,
+        swing_pullback: PositionEntryAssessment | None = None,
     ) -> InvestmentDecision:
         """方向評価とエントリー可否を分離し、実行用指標を付与する。"""
         decision = self._decide(
@@ -282,12 +283,39 @@ class LongOnlyDecisionPolicy:
         lifecycle_by_type = {item.pattern_type: item for item in lifecycles}
         lifecycle = lifecycle_by_type.get(lead.pattern_type) if lead else None
 
+        # 押し目は新しいセットアップ。ブレイクの3日制限を延長するものではない。
+        use_swing_pullback = False
+        if (
+            horizon_days == 5
+            and swing_pullback is not None
+            and swing_pullback.phase is PositionEntryPhase.PULLBACK_CANDIDATE
+            and direction is Direction.UP
+            and decision.action is InvestmentAction.WATCH
+            and not any(item.direction is Direction.DOWN for item in latest)
+            and not any(
+                item.status in {PatternLifecycleStatus.FAILED, PatternLifecycleStatus.WEAKENING}
+                for item in lifecycles
+                if lead is not None and item.detected_at == lead.detected_at
+            )
+        ):
+            decision = self._decide_position_entry(
+                swing_pullback, direction, scores.get(direction, 0.0),
+                next(check for check in checks if check.key == "data_freshness"),
+                checks, decision.cautions,
+            )
+            use_swing_pullback = True
+        entry_assessment = swing_pullback if use_swing_pullback else position_entry
+        uses_support_entry = horizon_days == 20 or use_swing_pullback
+
         if decision.action is InvestmentAction.BUY_CANDIDATE:
             stage = EntryStage.ENTRY_READY
             entry_score = decision.evidence_score
         elif decision.action is InvestmentAction.AVOID_NEW_BUY:
             stage = EntryStage.AVOID
             entry_score = 0.0
+        elif use_swing_pullback:
+            stage = EntryStage.CONDITIONAL_ENTRY
+            entry_score = min(decision.evidence_score, 75.0)
         elif (
             (
                 direction is Direction.DOWN
@@ -340,22 +368,22 @@ class LongOnlyDecisionPolicy:
             entry_score = min(decision.evidence_score, 60.0)
 
         execution_stop = (
-            position_entry.invalidation_price
-            if horizon_days == 20 and position_entry is not None
+            entry_assessment.invalidation_price
+            if uses_support_entry and entry_assessment is not None
             else lifecycle.execution_stop_price
             if lifecycle is not None
             else None
         )
         target = (
-            position_entry.target_price
-            if horizon_days == 20 and position_entry is not None
+            entry_assessment.target_price
+            if uses_support_entry and entry_assessment is not None
             else lifecycle.target_price
             if lifecycle is not None
             else None
         )
         risk_reward = (
-            position_entry.risk_reward_ratio
-            if horizon_days == 20 and position_entry is not None
+            entry_assessment.risk_reward_ratio
+            if uses_support_entry and entry_assessment is not None
             else lifecycle.execution_risk_reward_ratio
             if lifecycle is not None
             else None
@@ -363,6 +391,7 @@ class LongOnlyDecisionPolicy:
         confirmation = next((c for c in checks if c.key == "swing_confirmation"), None)
         if (
             horizon_days == 5
+            and not use_swing_pullback
             and decision.action is InvestmentAction.BUY_CANDIDATE
             and confirmation is not None
             and confirmation.value == 1
@@ -383,7 +412,7 @@ class LongOnlyDecisionPolicy:
             or target is None
             or risk_reward is None
             or not 0 < execution_stop < current_price < target
-            or risk_reward < (1.5 if horizon_days == 20 else 1.2)
+            or risk_reward < (1.5 if uses_support_entry else 1.2)
         )
         if decision.action is InvestmentAction.BUY_CANDIDATE and (
             invalid_execution or (safety is not None and safety.value != 0)
@@ -402,8 +431,8 @@ class LongOnlyDecisionPolicy:
             stage = EntryStage.CONDITIONAL_ENTRY
             entry_score = min(entry_score, 75.0)
         setup_score = (
-            position_entry.readiness_score
-            if horizon_days == 20 and position_entry is not None
+            entry_assessment.readiness_score
+            if uses_support_entry and entry_assessment is not None
             else lead.fit_score
             if lead is not None
             else position_entry.readiness_score
@@ -418,6 +447,12 @@ class LongOnlyDecisionPolicy:
             execution_stop_price=execution_stop,
             expected_target_price=target,
             execution_risk_reward_ratio=risk_reward,
+            entry_strategy=(
+                "swing_pullback" if use_swing_pullback
+                else "position_pullback" if horizon_days == 20
+                else "breakout" if lead is not None
+                else None
+            ),
         )
 
     def _decide(
@@ -459,6 +494,27 @@ class LongOnlyDecisionPolicy:
         if relative_strength.value is not None and relative_strength.value < -3:
             cautions.append(
                 f"対象期間の相対力はTOPIX比{relative_strength.value:+.2f}%で、市場より弱い状態です"
+            )
+
+        top_watch = (
+            next(
+                (
+                    condition
+                    for condition in position_entry.conditions
+                    if condition.key == "head_and_shoulders_watch" and not condition.satisfied
+                ),
+                None,
+            )
+            if horizon_days == 20 and position_entry is not None
+            else None
+        )
+        if top_watch is not None and not bearish:
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                round(evidence_score, 1),
+                "三尊候補のため待つ：下落確認と見立て撤回の条件を監視します",
+                (top_watch.description,),
+                tuple(cautions),
             )
 
         if bullish and bearish:
@@ -798,6 +854,22 @@ class LongOnlyDecisionPolicy:
                 InvestmentAction.WATCH,
                 evidence_score,
                 "直近20営業日の市場対比が弱いため、反発の継続を待ちます",
+                tuple(reasons),
+                tuple(cautions),
+            )
+        falling_lows = next(
+            (
+                condition
+                for condition in assessment.conditions
+                if condition.key == "falling_lows_stopped" and not condition.satisfied
+            ),
+            None,
+        )
+        if falling_lows is not None:
+            return InvestmentDecision(
+                InvestmentAction.WATCH,
+                evidence_score,
+                "陽線反発でも安値切り下げが続いているため、下げ止まり確認を待ちます",
                 tuple(reasons),
                 tuple(cautions),
             )

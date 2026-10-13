@@ -51,7 +51,7 @@ class Settings:
     jquants_api_key: str | None = None
     jquants_plan: str = "light"
     slack_webhook_url: str | None = None
-    market_screening_limit: int = 500
+    market_screening_limit: int = 0
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.5"
     openai_max_output_tokens: int = 6_000
@@ -101,11 +101,13 @@ class Settings:
         if jquants_plan not in {"free", "light", "standard", "premium"}:
             raise ConfigurationError("JQUANTS_PLAN is invalid")
         try:
-            market_screening_limit = int(os.getenv("MARKET_SCREENING_LIMIT", "500"))
+            market_screening_limit = int(os.getenv("MARKET_SCREENING_LIMIT", "0"))
         except ValueError as error:
             raise ConfigurationError("MARKET_SCREENING_LIMIT must be an integer") from error
-        if not 1 <= market_screening_limit <= 2000:
-            raise ConfigurationError("MARKET_SCREENING_LIMIT must be between 1 and 2000")
+        if market_screening_limit < 0:
+            raise ConfigurationError(
+                "MARKET_SCREENING_LIMITは0（全件）または正の整数で指定してください"
+            )
         openai_model = os.getenv("OPENAI_MODEL", "gpt-5.5").strip()
         if not openai_model or len(openai_model) > 100:
             raise ConfigurationError("OPENAI_MODEL is invalid")

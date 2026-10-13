@@ -42,7 +42,7 @@ def test_defaults(monkeypatch) -> None:
     assert settings.jquants_request_interval_seconds == 1.05
     assert settings.jquants_history_years == 5
     assert settings.jquants_data_delay_days == 0
-    assert settings.market_screening_limit == 500
+    assert settings.market_screening_limit == 0
     assert settings.openai_api_key is None
     assert settings.openai_model == "gpt-5.5"
     assert settings.openai_max_output_tokens == 6_000
@@ -75,9 +75,7 @@ def test_api_auth_requires_long_internal_token(monkeypatch) -> None:
 def test_production_rejects_local_internal_token(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("API_AUTH_REQUIRED", "true")
-    monkeypatch.setenv(
-        "INTERNAL_API_TOKEN", "change-this-local-token-before-deploying"
-    )
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "change-this-local-token-before-deploying")
 
     with pytest.raises(ConfigurationError, match="ローカル初期値"):
         Settings.from_env()
@@ -110,3 +108,15 @@ def test_safe_dict_does_not_reveal_secrets(monkeypatch) -> None:
     assert safe_settings["openai_api_key"] == "configured"
     assert safe_settings["internal_api_token"] == "configured"
     assert "secret" not in repr(safe_settings)
+
+
+@pytest.mark.parametrize("limit", [0, 500, 5000])
+def test_market_screening_limit_allows_full_market(monkeypatch, limit):
+    monkeypatch.setenv("MARKET_SCREENING_LIMIT", str(limit))
+    assert Settings.from_env().market_screening_limit == limit
+
+
+def test_market_screening_limit_rejects_negative(monkeypatch):
+    monkeypatch.setenv("MARKET_SCREENING_LIMIT", "-1")
+    with pytest.raises(ConfigurationError, match="MARKET_SCREENING_LIMIT"):
+        Settings.from_env()

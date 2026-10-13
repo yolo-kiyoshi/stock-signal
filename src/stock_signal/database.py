@@ -1051,9 +1051,9 @@ def list_analysis_universe(
     database_url: str,
     *,
     provider: str = "jquants",
-    limit: int = 500,
+    limit: int = 0,
 ) -> list[WatchlistItem]:
-    """十分な日足があり売買代金上位の普通株を分析対象として返す。"""
+    """十分な日足がある普通株を売買代金順に返す。上限0は全件。"""
     query = text(
         """
         WITH coverage_start AS (
@@ -1105,7 +1105,7 @@ def list_analysis_universe(
     with get_engine(database_url).connect() as connection:
         rows = connection.execute(
             query,
-            {"provider": provider, "limit": min(limit, 2000)},
+            {"provider": provider, "limit": limit or None},
         )
         return [WatchlistItem(*row) for row in rows]
 
@@ -1190,6 +1190,7 @@ def list_market_candidates(
     horizon_days: int = 5,
     action: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     """全市場スクリーニングの最新候補を返す。"""
     latest_date = (
@@ -1225,14 +1226,19 @@ def list_market_candidates(
         .where(
             analysis_snapshots.c.horizon_days == horizon_days,
             analysis_snapshots.c.as_of_date == latest_date,
+            analysis_snapshots.c.provider == "jquants",
         )
     )
     if action:
         statement = statement.where(analysis_snapshots.c.action == action)
-    statement = statement.order_by(
-        analysis_snapshots.c.evidence_score.desc(),
-        analysis_snapshots.c.symbol,
-    ).limit(min(limit, 500))
+    statement = (
+        statement.order_by(
+            analysis_snapshots.c.evidence_score.desc(),
+            analysis_snapshots.c.symbol,
+        )
+        .limit(min(limit, 500))
+        .offset(offset)
+    )
     with get_engine(database_url).connect() as connection:
         rows = connection.execute(statement).mappings().all()
         metrics = _load_sidebar_metrics(
@@ -1278,6 +1284,9 @@ def list_market_candidates(
                 "evidence_score": row["evidence_score"],
                 "entry_stage": analysis_data.get("entry_stage", fallback_stage),
                 "entry_score": analysis_data.get("entry_score"),
+                "entry_strategy": analysis_data.get("entry_strategy"),
+                "entry_diagnostics": analysis_data.get("entry_diagnostics"),
+                "engine_version": analysis_data.get("engine_version"),
                 "execution_risk_reward_ratio": analysis_data.get("execution_risk_reward_ratio"),
                 "market": row["market"],
                 "instrument_type": row["instrument_type"],

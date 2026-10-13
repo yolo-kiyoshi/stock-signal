@@ -20,6 +20,7 @@ type Props = {
     movingAverage: boolean;
     rsi: boolean;
     resistance: boolean;
+    support: boolean;
   };
 };
 
@@ -144,19 +145,21 @@ export function PriceChart({ payload, horizon, indicators }: Props) {
       });
     }
 
-    if (indicators.resistance) {
+    for (const kind of ["resistance", "support"] as const) {
+      if (!indicators[kind]) continue;
       const lookback = horizon === 5 ? "60" : "120";
-      const resistanceBands = (payload.indicators.resistance_bands[lookback] ?? [])
+      const bands = (payload.indicators[`${kind}_bands`]?.[lookback] ?? [])
         .toSorted((left, right) => Math.abs(left.distance_percent) - Math.abs(right.distance_percent))
         .slice(0, 3);
-      resistanceBands.forEach((band, index) => {
+      bands.forEach((band, index) => {
+        const label = kind === "support" ? "支持帯" : "抵抗帯";
         const series = chart.addSeries(LineSeries, {
-          color: index === 0 ? "rgba(169, 87, 55, .72)" : "rgba(169, 87, 55, .38)",
-          lineStyle: LineStyle.Dashed,
+          color: kind === "support" ? "rgba(38, 117, 81, .72)" : "rgba(169, 87, 55, .72)",
+          lineStyle: kind === "support" ? LineStyle.Dotted : LineStyle.Dashed,
           lineWidth: index === 0 ? 2 : 1,
           priceLineVisible: false,
-          lastValueVisible: false,
-          title: `抵抗帯 ${band.touches}回接触`,
+          lastValueVisible: true,
+          title: `${label} ${band.touches}回接触`,
         });
         series.setData([
           { time: payload.bars[0].trade_date as Time, value: band.center },

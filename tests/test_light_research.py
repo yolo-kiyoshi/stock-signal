@@ -289,15 +289,30 @@ def test_financial_failure_is_recorded_without_deleting_history(database_url):
 
     class Provider:
         def fetch_financial_summaries(self, symbol):
-            raise MarketDataResponseError('取得失敗')
+            raise MarketDataResponseError("取得失敗")
+
     save_disclosures(database_url, [report()])
     with pytest.raises(MarketDataResponseError):
-        sync_financials(database_url, Provider(), '7203')
-    assert financial_sync_state(database_url, '7203')['status'] == 'failed'
-    assert len(load_disclosures(database_url, '7203', date(2026, 8, 3))) == 1
+        sync_financials(database_url, Provider(), "7203")
+    assert financial_sync_state(database_url, "7203")["status"] == "failed"
+    assert len(load_disclosures(database_url, "7203", date(2026, 8, 3))) == 1
 
 
-def test_long_term_missing_financials_gates_candidate_without_probability(database_url):
+@pytest.mark.parametrize(
+    "sync_status,expected",
+    [
+        ("missing", "data_pending"),
+        ("failed", "data_pending"),
+        ("stale", "data_pending"),
+        ("success", "metrics_missing"),
+    ],
+)
+def test_long_term_missing_financials_gates_candidate_without_probability(
+    database_url, monkeypatch, sync_status, expected
+):
+    monkeypatch.setattr(
+        "stock_signal.research.financial_sync_state", lambda *args: {"status": sync_status}
+    )
     from stock_signal.domain.analysis import (
         AnalysisResult,
         Direction,
@@ -307,18 +322,104 @@ def test_long_term_missing_financials_gates_candidate_without_probability(databa
     from stock_signal.research import enrich_analysis
 
     bars = bars_for_risk()
-    bars = [replace(b, trade_date=date.today() - timedelta(days=len(bars) - i - 1))
-            for i, b in enumerate(bars)]
-    result = AnalysisResult('TEST', date.today().isoformat(), 20, Direction.UP,
-                            {Direction.UP: 80}, (), 'test', 'test',
-                            investment_decision=InvestmentDecision(
-                                InvestmentAction.BUY_CANDIDATE, 80, '候補', (), ()))
-    enriched = enrich_analysis(database_url, result, bars, provider='jquants')
+    bars = [
+        replace(b, trade_date=date.today() - timedelta(days=len(bars) - i - 1))
+        for i, b in enumerate(bars)
+    ]
+    result = AnalysisResult(
+        "TEST",
+        date.today().isoformat(),
+        20,
+        Direction.UP,
+        {Direction.UP: 80},
+        (),
+        "test",
+        "test",
+        investment_decision=InvestmentDecision(InvestmentAction.BUY_CANDIDATE, 80, "候補", (), ()),
+    )
+    enriched = enrich_analysis(database_url, result, bars, provider="jquants")
     assert enriched.investment_decision.action == InvestmentAction.WATCH
     assert enriched.direction == result.direction
     assert enriched.scores == result.scores
-    assert enriched.research['portfolio']['max_shares'] is None
-    assert enriched.research['financials']['status'] == 'missing'
+    assert enriched.research["portfolio"]["max_shares"] is None
+    assert enriched.research["financials"]["status"] == "missing"
+    assert enriched.research["screening_status"] == expected
+
+
+@pytest.mark.parametrize("changes", [{"OP": "-10"}, {"FEPS": "10"}])
+def test_comparison_flags_do_not_override_financial_caution(changes):
+    result = evaluate_financials(
+        [report(2025), report(SigChgInC="true", **changes)], date(2026, 8, 3), 1000
+    )
+    assert result["status"] == "caution"
+    assert any(i["category"] == "review_required" for i in result["issues"])
+
+
+def test_zero_base_growth_requires_review_without_fabricated_rate():
+    result = evaluate_financials([report(2025, OP="0"), report()], date(2026, 8, 3), 1000)
+    assert result["metrics"]["op_yoy_percent"] is None
+    assert result["status"] == "partial"
+    assert any(
+        "ゼロ以下" in i["message"] and i["category"] == "review_required" for i in result["issues"]
+    )
+
+
+@pytest.mark.parametrize("old_bps,expected", [("500", "review_required"), ("", "metrics_missing")])
+def test_missing_bps_distinguishes_history_from_absence(old_bps, expected):
+    result = evaluate_financials(
+        [report(2025, BPS=old_bps), report(BPS="")], date(2026, 8, 3), 1000
+    )
+    assert result["metrics"]["pbr"] is None
+    assert any("BPS" in i["message"] and i["category"] == expected for i in result["issues"])
+
+
+def test_future_bps_is_not_available_for_review():
+    result = evaluate_financials(
+        [report(BPS=""), report(DiscNo="future", DiscDate="2026-08-04")], date(2026, 8, 3), 1000
+    )
+    assert result["metrics"]["pbr"] is None
+    assert any(
+        "BPS" in i["message"] and i["category"] == "metrics_missing" for i in result["issues"]
+    )
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        ({"BPS": ""}, "review_required"),
+        ({"FEPS": ""}, "metrics_missing"),
+        ({"SigChgInC": "true", "OP": "-10"}, "risk_hold"),
+    ],
+)
+def test_financial_screening_reason_and_risk_priority(database_url, monkeypatch, changes, expected):
+    from stock_signal.domain.analysis import (
+        AnalysisResult,
+        Direction,
+        InvestmentAction,
+        InvestmentDecision,
+    )
+    from stock_signal.research import enrich_analysis
+
+    monkeypatch.setattr(
+        "stock_signal.research.financial_sync_state", lambda *a: {"status": "success"}
+    )
+    financials = evaluate_financials([report(2025), report(**changes)], date(2026, 8, 3), 1000)
+    monkeypatch.setattr("stock_signal.research.evaluate_financials", lambda *a, **kw: financials)
+    bar = replace(bars_for_risk()[-1], trade_date=date.today())
+    result = AnalysisResult(
+        "TEST",
+        date.today().isoformat(),
+        20,
+        Direction.UP,
+        {Direction.UP: 80},
+        (),
+        "test",
+        "test",
+        investment_decision=InvestmentDecision(InvestmentAction.BUY_CANDIDATE, 80, "候補", (), ()),
+    )
+    enriched = enrich_analysis(database_url, result, [bar], provider="jquants")
+    assert enriched.investment_decision.action == InvestmentAction.WATCH
+    assert enriched.research["screening_status"] == expected
 
 
 def test_today_disclosure_holds_swing_even_before_financial_values_are_used(database_url):
@@ -331,12 +432,19 @@ def test_today_disclosure_holds_swing_even_before_financial_values_are_used(data
     from stock_signal.research import enrich_analysis
 
     save_disclosures(database_url, [report(DiscDate=date.today().isoformat())])
-    bar = replace(bars_for_risk()[-1], symbol='7203', trade_date=date.today())
-    result = AnalysisResult('7203', date.today().isoformat(), 5, Direction.UP,
-                            {Direction.UP: 80}, (), 'test', 'test',
-                            investment_decision=InvestmentDecision(
-                                InvestmentAction.BUY_CANDIDATE, 80, '候補', (), ()))
-    enriched = enrich_analysis(database_url, result, [bar], provider='jquants')
+    bar = replace(bars_for_risk()[-1], symbol="7203", trade_date=date.today())
+    result = AnalysisResult(
+        "7203",
+        date.today().isoformat(),
+        5,
+        Direction.UP,
+        {Direction.UP: 80},
+        (),
+        "test",
+        "test",
+        investment_decision=InvestmentDecision(InvestmentAction.BUY_CANDIDATE, 80, "候補", (), ()),
+    )
+    enriched = enrich_analysis(database_url, result, [bar], provider="jquants")
     assert enriched.investment_decision.action == InvestmentAction.WATCH
-    assert enriched.research['financials']['event_status'] == 'hold'
-    assert enriched.research['financials']['disclosed_date'] is None
+    assert enriched.research["financials"]["event_status"] == "hold"
+    assert enriched.research["financials"]["disclosed_date"] is None

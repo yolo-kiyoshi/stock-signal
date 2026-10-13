@@ -9,16 +9,27 @@ import type {
   PositionItem,
 } from "@/types/api";
 
+async function loadMarketCandidates(horizon: 5 | 20): Promise<{ items: MarketCandidate[] }> {
+  const items: MarketCandidate[] = [];
+  const limit = 500;
+  for (let offset = 0; ; offset += limit) {
+    const page = await backendJson<{ items: MarketCandidate[]; next_offset: number | null }>(
+      `/api/v1/market-candidates?horizon=${horizon}&limit=${limit}&offset=${offset}`,
+    );
+    items.push(...page.items);
+    if (page.next_offset === null) return { items };
+    if (page.next_offset !== offset + limit) {
+      throw new Error("分析候補のページ情報を確認できません。APIを再起動してください。");
+    }
+  }
+}
+
 export async function loadDashboardData(): Promise<DashboardData> {
   const [watchlist, positions, swing, position, dataPlan, aiCapability, marketEnvironment] = await Promise.all([
     backendJson<{ items: InstrumentListItem[] }>("/api/v1/watchlist"),
     backendJson<{ items: PositionItem[] }>("/api/v1/portfolio/positions"),
-    backendJson<{ items: MarketCandidate[] }>(
-      "/api/v1/market-candidates?horizon=5&limit=500",
-    ),
-    backendJson<{ items: MarketCandidate[] }>(
-      "/api/v1/market-candidates?horizon=20&limit=500",
-    ),
+    loadMarketCandidates(5),
+    loadMarketCandidates(20),
     backendJson<{ plan: string; capabilities: PlanCapability[] }>(
       "/api/v1/data-plan",
     ),

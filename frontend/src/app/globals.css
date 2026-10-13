@@ -281,6 +281,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .instrument:hover { background: var(--surface-soft); }
 .instrument.active { background: var(--accent-soft); border-color: #e7c3af; }
 .instrument-copy { display: flex; flex-direction: column; font-size: 11px; min-width: 0; overflow: hidden; }
+.candidate-strategy { color: var(--muted); font-weight: 600; margin-top: 7px; }
+.instrument-list.candidate-list { flex: 1 0 240px; min-height: 240px; }
+.candidate-list .instrument { flex-direction: column; }
+.candidate-list .instrument-copy { width: 100%; }
+.candidate-list .instrument-status { align-items: flex-start; max-width: none; order: -1; }
+.entry-diagnostics { display: flex; flex-direction: column; gap: 3px; line-height: 1.5; margin-top: 6px; overflow-wrap: anywhere; font-size: 11px; }
+.entry-diagnostics-date { opacity: .7; }
 .instrument-symbol-line { align-items: center; display: flex; gap: 5px; min-width: 0; }
 .instrument-symbol-line strong { flex: 0 0 auto; font-size: 13px; }
 .instrument-name { overflow: hidden; text-overflow: ellipsis; }

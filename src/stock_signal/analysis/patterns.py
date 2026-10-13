@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import combinations
 from statistics import fmean, median
 
 from stock_signal.analysis.indicators import wilder_atr
@@ -278,7 +279,9 @@ class TechnicalPatternDetector:
         threshold = (context.atr or close * 0.01) * 0.1
         results: list[PatternDetection] = []
         recent_peaks = peaks[-8:]
-        peak_pairs = list(zip(recent_peaks, recent_peaks[1:], strict=False))[::-1]
+        peak_pairs = sorted(
+            combinations(recent_peaks, 2), key=lambda pair: (pair[1], pair[0]), reverse=True
+        )
         for left, right in peak_pairs:
             similarity = abs(highs[left] / highs[right] - 1)
             has_higher_middle = (

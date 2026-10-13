@@ -21,6 +21,7 @@ const metricLabels: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   missing: "未取得・未設定", partial: "一部確認", stale: "更新確認が必要", caution: "警戒",
   reviewed: "数値確認済み", hold: "保留", unknown: "未確認", calculated: "算出済み",
+  data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要",
 };
 
 export function ResearchPanel({ research }: { research?: ResearchAssessment | null }) {
@@ -56,6 +57,7 @@ export function ResearchPanel({ research }: { research?: ResearchAssessment | nu
       <article className="detail-card">
         <h4>企業品質・業績・評価倍率：{statusLabels[finance?.status ?? "missing"]}</h4>
         <p>採用した決算開示日：{finance?.disclosed_date ?? "未取得"}／分析日：{finance?.as_of_date ?? "—"}</p>
+        {finance?.issues?.map((issue) => <p key={`${issue.category}:${issue.message}`}><strong>{statusLabels[issue.category] ?? issue.category}：</strong>{issue.message}</p>)}
         <dl className="research-metrics">{Object.entries(finance?.metrics ?? {}).map(([key, value]) =>
           <div key={key}><dt>{metricLabels[key] ?? key}</dt><dd>{value == null ? "未算出" : typeof value === "number" ? value.toLocaleString("ja-JP", { maximumFractionDigits: 2 }) : value}</dd></div>)}</dl>
         <h4>開示イベント：{statusLabels[finance?.event_status ?? "unknown"]}</h4>

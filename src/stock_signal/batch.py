@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from dataclasses import asdict
 from datetime import date, timedelta
 from types import TracebackType
 from typing import cast
@@ -389,6 +390,15 @@ class DailyBatchRunner:
                             action=decision.action.value,
                             evidence_score=decision.evidence_score,
                             analysis_json={
+                                "entry_strategy": decision.entry_strategy,
+                                "entry_diagnostics": (
+                                    asdict(result.entry_diagnostics)
+                                    if result.entry_diagnostics is not None else None
+                                ),
+                                "swing_pullback": (
+                                    asdict(result.swing_pullback)
+                                    if result.swing_pullback is not None else None
+                                ),
                                 "research": result.research,
                                 "summary": decision.summary,
                                 "reasons": list(decision.reasons),

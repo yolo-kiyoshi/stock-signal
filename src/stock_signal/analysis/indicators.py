@@ -10,7 +10,7 @@ from stock_signal.domain.market_data import DailyBar
 
 @dataclass(frozen=True, slots=True)
 class ResistanceBand:
-    """複数の局所高値が集中する、上値抵抗の候補帯。"""
+    """複数の局所高値・安値が集中する価格帯。"""
 
     lower: float
     upper: float
@@ -52,10 +52,7 @@ def wilder_rsi_series(
     if len(closes) < window + 1:
         return tuple(values)
 
-    changes = [
-        current - previous
-        for previous, current in zip(closes, closes[1:], strict=False)
-    ]
+    changes = [current - previous for previous, current in zip(closes, closes[1:], strict=False)]
     average_gain = fmean(max(change, 0.0) for change in changes[:window])
     average_loss = fmean(max(-change, 0.0) for change in changes[:window])
 
@@ -68,12 +65,8 @@ def wilder_rsi_series(
     values[window] = rsi_value()
     for change_index in range(window, len(changes)):
         change = changes[change_index]
-        average_gain = (
-            average_gain * (window - 1) + max(change, 0.0)
-        ) / window
-        average_loss = (
-            average_loss * (window - 1) + max(-change, 0.0)
-        ) / window
+        average_gain = (average_gain * (window - 1) + max(change, 0.0)) / window
+        average_loss = (average_loss * (window - 1) + max(-change, 0.0)) / window
         values[change_index + 1] = rsi_value()
     return tuple(values)
 
@@ -83,24 +76,28 @@ def _local_highs(
     *,
     start: int,
     span: int,
+    support: bool = False,
 ) -> list[tuple[int, float]]:
     candidates = []
+    values = [-float(bar.low) if support else float(bar.high) for bar in bars]
     for index in range(max(start, span), len(bars) - span):
-        value = float(bars[index].high)
-        before = [float(bars[item].high) for item in range(index - span, index)]
-        after = [float(bars[item].high) for item in range(index + 1, index + span + 1)]
-        if value >= max(before) and value >= max(after) and (
-            value > max(before) or value > max(after)
+        value = values[index]
+        before = [values[item] for item in range(index - span, index)]
+        after = [values[item] for item in range(index + 1, index + span + 1)]
+        if (
+            value >= max(before)
+            and value >= max(after)
+            and (value > max(before) or value > max(after))
         ):
             if candidates and index - candidates[-1][0] <= span:
                 if value > candidates[-1][1]:
                     candidates[-1] = (index, value)
                 continue
             candidates.append((index, value))
-    return candidates
+    return [(index, -value if support else value) for index, value in candidates]
 
 
-def resistance_bands(
+def _price_bands(
     bars: Sequence[DailyBar],
     *,
     lookback: int,
@@ -109,6 +106,7 @@ def resistance_bands(
     pivot_span: int = 2,
     cluster_tolerance_atr: float = 0.5,
     band_padding_atr: float = 0.2,
+    support: bool = False,
 ) -> tuple[ResistanceBand, ...]:
     """ATRで近接する局所高値をまとめ、現在の上値抵抗候補を返す。"""
     if lookback <= 0:
@@ -128,7 +126,7 @@ def resistance_bands(
         return ()
 
     start = max(0, len(bars) - lookback)
-    peaks = _local_highs(bars, start=start, span=pivot_span)
+    peaks = _local_highs(bars, start=start, span=pivot_span, support=support)
     if not peaks:
         return ()
     tolerance = atr * cluster_tolerance_atr
@@ -159,7 +157,10 @@ def resistance_bands(
         lower = center - half_width
         upper = center + half_width
         # 終値で明確に上抜けた帯は、抵抗の役割を終えたものとする。
-        if current_close > upper + atr * 0.1:
+        if support:
+            if current_close < lower - atr * 0.1:
+                continue
+        elif current_close > upper + atr * 0.1:
             continue
         indexes = [index for index, _ in cluster]
         candidates.append(
@@ -174,9 +175,46 @@ def resistance_bands(
             )
         )
     return tuple(
-        sorted(candidates, key=lambda band: abs(band.center - current_close))[
-            :maximum_bands
-        ]
+        sorted(candidates, key=lambda band: abs(band.center - current_close))[:maximum_bands]
+    )
+
+
+def resistance_bands(
+    bars: Sequence[DailyBar],
+    *,
+    lookback: int,
+    minimum_touches: int = 2,
+    maximum_bands: int = 3,
+    pivot_span: int = 2,
+    cluster_tolerance_atr: float = 0.5,
+    band_padding_atr: float = 0.2,
+) -> tuple[ResistanceBand, ...]:
+    """複数回接触した局所高値から、上抜けていない抵抗候補帯を返す。"""
+    return _price_bands(
+        bars,
+        lookback=lookback,
+        minimum_touches=minimum_touches,
+        maximum_bands=maximum_bands,
+        pivot_span=pivot_span,
+        cluster_tolerance_atr=cluster_tolerance_atr,
+        band_padding_atr=band_padding_atr,
+    )
+
+
+def support_bands(
+    bars: Sequence[DailyBar],
+    *,
+    lookback: int,
+    minimum_touches: int = 2,
+    maximum_bands: int = 3,
+) -> tuple[ResistanceBand, ...]:
+    """複数回接触した局所安値から、下抜けていない支持候補帯を返す。"""
+    return _price_bands(
+        bars,
+        lookback=lookback,
+        minimum_touches=minimum_touches,
+        maximum_bands=maximum_bands,
+        support=True,
     )
 
 
@@ -200,10 +238,7 @@ def wilder_atr(
         raise ValueError("ATR期間は1以上で指定してください")
     if stop < window + 1:
         return None
-    ranges = [
-        true_range(bars[index], bars[index - 1])
-        for index in range(1, stop)
-    ]
+    ranges = [true_range(bars[index], bars[index - 1]) for index in range(1, stop)]
     atr = fmean(ranges[:window])
     for value in ranges[window:]:
         atr = (atr * (window - 1) + value) / window

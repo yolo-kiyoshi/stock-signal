@@ -8,6 +8,7 @@ from stock_signal.analysis.indicators import (
     simple_moving_average_series,
     wilder_atr,
 )
+from stock_signal.analysis.top_watch import head_and_shoulders_watch
 from stock_signal.domain.analysis import (
     PositionEntryAssessment,
     PositionEntryCondition,
@@ -116,7 +117,24 @@ class PositionEntryEvaluator:
             volume_ratio is not None and volume_ratio >= self.minimum_volume_ratio
         ) or follow_through_confirmed
         support_touched_and_held = bool(held_touches)
+        recent_lows = [float(bar.low) for bar in ordered[-5:]]
+        falling_lows = (
+            recent_lows[-1] < recent_lows[-2] < recent_lows[-3]
+            and max(recent_lows[:-2]) - recent_lows[-1] >= 0.5 * atr
+        )
         conditions = (
+            PositionEntryCondition(
+                "falling_lows_stopped",
+                "直近の安値切り下げが停止",
+                not falling_lows,
+                (
+                    f"直近3本の安値{recent_lows[-3]:.2f}→{recent_lows[-2]:.2f}→"
+                    f"{recent_lows[-1]:.2f}が切り下がり、直近5本で0.5 ATR以上低下しています。"
+                    "陽線だけでは反発確定とせず、安値切り下げの停止後に支持帯維持と反発継続を再確認します"
+                    if falling_lows
+                    else "直近3本の連続安値切り下げと0.5 ATR以上の低下はありません"
+                ),
+            ),
             PositionEntryCondition(
                 "average_order",
                 "20日線が60日線以上",
@@ -170,6 +188,9 @@ class PositionEntryEvaluator:
                 ),
             ),
         )
+        top_watch = head_and_shoulders_watch(ordered)
+        if top_watch is not None:
+            conditions = (top_watch, *conditions)
         satisfied = sum(condition.satisfied for condition in conditions)
         unmet = [condition for condition in conditions if not condition.satisfied]
         trend_preserved = average_order and long_average_rising and trend_floor_held
@@ -193,6 +214,14 @@ class PositionEntryEvaluator:
         else:
             phase = PositionEntryPhase.NO_SETUP
             summary = "中期トレンドは維持していますが、明確な押し目条件はありません"
+
+        if falling_lows and phase is PositionEntryPhase.PULLBACK_CANDIDATE:
+            phase = PositionEntryPhase.SUPPORT_TEST
+            summary = "陽線反発でも安値切り下げが続いているため、下げ止まり確認を待ちます"
+
+        if top_watch is not None:
+            phase = PositionEntryPhase.SUPPORT_TEST
+            summary = "三尊候補のため待つ：下抜け確認と見立て撤回の条件を監視します"
 
         invalidation = None
         if held_touches:

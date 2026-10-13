@@ -108,10 +108,18 @@ def evaluate_financials(
         "cautions": [],
         "event_status": "unknown",
         "events": [],
+        "issues": [],
     }
     forecasts, result["events"] = _forecast_history(visible, as_of)
     result["event_status"] = "hold" if result["events"] else "unknown"
     if not reports:
+        result["issues"].append(
+            {
+                "category": "metrics_missing",
+                "message": "取得済みデータに利用可能な決算短信がありません。"
+                "取得範囲と開示内容を確認してください",
+            }
+        )
         result["cautions"].append("利用可能な決算短信がなく企業品質は未確認です")
         return result
     latest = max(
@@ -197,10 +205,10 @@ def evaluate_financials(
     )
     if age > 150:
         result["cautions"].append("財務開示から150日を超えています")
-    elif deteriorating:
+    if deteriorating:
         result["status"] = "caution"
         result["cautions"].append("赤字または営業利益の前年同期比10%超減少を検出しました")
-    elif (
+    elif age <= 150 and (
         op is not None
         and profit is not None
         and metrics["sales_yoy_percent"] is not None
@@ -213,8 +221,78 @@ def evaluate_financials(
         result["status"] = "caution"
         result["cautions"].append("会社予想PERが40倍を超えています（業種横断の暫定確認水準）")
     if latest.get("RetroRst") == "true" or latest.get("SigChgInC") == "true":
-        result["status"] = "partial"
+        if result["status"] == "reviewed":
+            result["status"] = "partial"
         result["cautions"].append("修正再表示または連結範囲変更があり単純比較の確認が必要です")
+        result["issues"].append(
+            {
+                "category": "review_required",
+                "message": "修正再表示・連結範囲変更の影響を開示本文で確認してください",
+            }
+        )
+    if age > 150:
+        result["issues"].append(
+            {
+                "category": "review_required",
+                "message": "採用した開示が150日超前です。決算日程と取得範囲を確認してください",
+            }
+        )
+    if split_since_report:
+        result["issues"].append(
+            {
+                "category": "review_required",
+                "message": "株式分割等と一株指標の基準を照合してください",
+            }
+        )
+    for key, label in [("Sales", "売上高"), ("OP", "営業利益")]:
+        metric = "sales_yoy_percent" if key == "Sales" else "op_yoy_percent"
+        if metrics[metric] is not None:
+            continue
+        old = number(prior.get(key))
+        if number(latest.get(key)) is None or (prior and old is None):
+            category, message = (
+                "metrics_missing",
+                f"{label}が欠けています。業種・会計基準に応じた別指標での確認が必要です",
+            )
+        elif old is not None and old <= 0:
+            category, message = (
+                "review_required",
+                f"前年同期の{label}がゼロ以下のため増減率は算出しません。黒字転換・赤字幅などの内容を確認してください",
+            )
+        else:
+            category, message = (
+                "review_required",
+                f"{label}の同期間・同会計基準の前年同期比較ができません。比較対象の取得範囲と決算内容を確認してください",
+            )
+        result["issues"].append({"category": category, "message": message})
+    if profit is None:
+        result["issues"].append(
+            {
+                "category": "metrics_missing",
+                "message": "純利益が欠けているため収益性を確認できません",
+            }
+        )
+    if metrics["forecast_per"] is None and not split_since_report:
+        result["issues"].append(
+            {
+                "category": "metrics_missing",
+                "message": "予想PERに必要な正の会社予想EPSまたは実株価がありません。"
+                "会社予想の有無・対象年度を確認してください",
+            }
+        )
+    if metrics["pbr"] is None and not split_since_report:
+        historical_bps = any(number(r.get("BPS")) is not None for r in reports if r != latest)
+        result["issues"].append(
+            {
+                "category": "review_required"
+                if historical_bps and bps is None
+                else "metrics_missing",
+                "message": "最新決算のBPSが欠けています。過去のBPSはありますが、"
+                "基準日・分割・資本変動の整合確認前には代用しません"
+                if historical_bps and bps is None
+                else "PBRに必要な正のBPSまたは実株価がありません",
+            }
+        )
     result["event_status"] = "hold" if result["events"] else "partial"
     result["cautions"].append(
         "財務数値による限定的確認です。適時開示本文・希薄化・事業リスクは未確認です"

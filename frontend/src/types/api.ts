@@ -58,7 +58,28 @@ export type RakutenImportResponse = {
   message?: string;
 };
 
+export type EntryDiagnostics = {
+  current_price: number;
+  atr: number | null;
+  sma20_distance_percent: number | null;
+  sma20_distance_atr: number | null;
+  return_10d_percent: number | null;
+  return_20d_percent: number | null;
+  rise_20d_atr: number | null;
+  resistance_status: "unavailable" | "within_band" | "above" | "not_found";
+  resistance_price: number | null;
+  resistance_room_percent: number | null;
+  resistance_room_atr: number | null;
+  stop_price: number | null;
+  stop_width_percent: number | null;
+  stop_width_atr: number | null;
+  resistance_risk_reward_ratio: number | null;
+};
+
 export type MarketCandidate = InstrumentListItem & {
+  entry_strategy?: string | null;
+  entry_diagnostics?: EntryDiagnostics | null;
+  engine_version?: string | null;
   technical_action?: string | null;
   screening_status?: string;
   judgment_reason?: string | null;
@@ -148,6 +169,7 @@ export type DailyBarsResponse = {
     moving_averages: Record<string, Array<number | null>>;
     rsi: Record<string, Array<number | null>>;
     resistance_bands: Record<string, ResistanceBand[]>;
+    support_bands: Record<string, ResistanceBand[]>;
   };
   bars: DailyBar[];
 };
@@ -214,6 +236,8 @@ export type EquityCheck = {
 };
 
 export type AnalysisResponse = {
+  entry_diagnostics?: EntryDiagnostics | null;
+  swing_pullback?: AnalysisStage | null;
   research?: ResearchAssessment | null;
   symbol: string;
   as_of_date: string;
@@ -232,6 +256,7 @@ export type AnalysisResponse = {
   patterns: AnalysisPattern[];
   equity_checks: EquityCheck[];
   investment_decision: {
+    entry_strategy?: string | null;
     action: "buy_candidate" | "watch" | "avoid_new_buy" | "insufficient_data";
     evidence_score: number;
     summary: string;
@@ -266,6 +291,7 @@ export type ResearchAssessment = {
     status: string; as_of_date: string; disclosed_date: string | null;
     metrics: Record<string, number | string | null>; cautions: string[];
     event_status: string; events: string[];
+    issues?: Array<{ category: string; message: string }>;
   };
   portfolio: {
     status: string; max_shares: number | null; limits: Record<string, number>; cautions: string[];

@@ -218,7 +218,9 @@ def test_screening_fetches_only_technical_candidates_once_and_preserves_failures
     with get_engine(database_url).connect() as connection:
         rows = connection.execute(select(analysis_snapshots)).mappings().all()
     long = next(r for r in rows if r["horizon_days"] == 20)
-    assert long["analysis_json"]["research"]["screening_status"] == "data_pending"
+    assert long["analysis_json"]["research"]["screening_status"] == (
+        "data_pending" if fail else "metrics_missing"
+    )
     assert long["action"] == "watch"
 
 

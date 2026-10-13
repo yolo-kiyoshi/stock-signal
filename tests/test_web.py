@@ -68,9 +68,7 @@ def test_ai_review_execution_is_rejected_before_api_key_configuration(
         replace(web_app_module.settings, openai_api_key=None),
     )
     with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/instruments/7203/ai-investment-review?horizon=5"
-        )
+        response = client.post("/api/v1/instruments/7203/ai-investment-review?horizon=5")
 
     assert response.status_code == 503
     assert "OPENAI_API_KEY" in response.json()["detail"]
@@ -144,17 +142,14 @@ def test_ai_review_endpoint_combines_saved_analysis_and_citations(
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/v1/instruments/7203/ai-investment-review"
-            "?horizon=5&provider=jquants"
+            "/api/v1/instruments/7203/ai-investment-review?horizon=5&provider=jquants"
         )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ready"
     assert payload["search_performed"] is True
-    assert payload["report_segments"][1]["citation"]["url"] == (
-        "https://example.com/official"
-    )
+    assert payload["report_segments"][1]["citation"]["url"] == ("https://example.com/official")
 
 
 def test_daily_bar_api_returns_aligned_chart_indicators(database_url) -> None:
@@ -177,9 +172,7 @@ def test_daily_bar_api_returns_aligned_chart_indicators(database_url) -> None:
     )
 
     with TestClient(app) as client:
-        response = client.get(
-            "/api/v1/instruments/7203/daily-bars?range=1m&provider=jquants"
-        )
+        response = client.get("/api/v1/instruments/7203/daily-bars?range=1m&provider=jquants")
 
     assert response.status_code == 200
     payload = response.json()
@@ -189,10 +182,7 @@ def test_daily_bar_api_returns_aligned_chart_indicators(database_url) -> None:
     assert set(indicators["moving_averages"]) == {"5", "20", "60"}
     assert set(indicators["rsi"]) == {"14", "28"}
     assert set(indicators["resistance_bands"]) == {"60", "120"}
-    assert all(
-        len(series) == len(bars)
-        for series in indicators["moving_averages"].values()
-    )
+    assert all(len(series) == len(bars) for series in indicators["moving_averages"].values())
     assert all(len(series) == len(bars) for series in indicators["rsi"].values())
     # 表示期間より前の日足も計算するため、先頭から指標を描画できる。
     assert indicators["moving_averages"]["60"][0] is not None
@@ -231,20 +221,28 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
         assert payload["transition_readiness"] is None
         return
     assert payload["investment_decision"]["score_is_probability"] is False
-    assert payload["investment_decision"]["action"] in {
-        "buy_candidate", "watch", "avoid_new_buy"
-    }
+    assert payload["investment_decision"]["action"] in {"buy_candidate", "watch", "avoid_new_buy"}
     assert payload["investment_decision"]["entry_stage"] in {
-        "setup_confirmed", "conditional_entry", "entry_ready",
-        "wait_for_pullback", "avoid", "not_applicable",
+        "setup_confirmed",
+        "conditional_entry",
+        "entry_ready",
+        "wait_for_pullback",
+        "avoid",
+        "not_applicable",
     }
     assert "execution_risk_reward_ratio" in payload["investment_decision"]
     transition = payload["transition_readiness"]
     assert transition["score_is_probability"] is False
     assert 0 <= transition["satisfied_conditions"] <= transition["total_conditions"]
     assert transition["phase"] in {
-        "falling", "bottoming", "preparing", "one_gate_remaining",
-        "early_reversal", "breakout_confirmed", "uptrend", "caution",
+        "falling",
+        "bottoming",
+        "preparing",
+        "one_gate_remaining",
+        "early_reversal",
+        "breakout_confirmed",
+        "uptrend",
+        "caution",
     }
     assert len(transition["conditions"]) >= 4
     assert isinstance(payload["patterns"], list)
@@ -252,8 +250,13 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
     if payload["patterns"]:
         lifecycle = payload["patterns"][0]["lifecycle"]
         assert lifecycle["status"] in {
-            "entry_window", "overextended", "monitoring", "weakening",
-            "target_reached", "failed", "expired"
+            "entry_window",
+            "overextended",
+            "monitoring",
+            "weakening",
+            "target_reached",
+            "failed",
+            "expired",
         }
         assert lifecycle["maximum_monitoring_days"] == 20
         assert "breakout_distance_atr" in lifecycle
@@ -262,9 +265,16 @@ def test_latest_analysis_returns_factors_when_data_exists() -> None:
         assert "execution_stop_price" in lifecycle
         assert "execution_risk_reward_ratio" in lifecycle
     assert {check["key"] for check in payload["equity_checks"]} >= {
-        "data_freshness", "volume_ratio", "gap_atr", "liquidity_score", "market_trend_score",
-        "relative_strength", "relative_strength_short", "beta_topix",
-        "sector_trend_score", "days_to_earnings",
+        "data_freshness",
+        "volume_ratio",
+        "gap_atr",
+        "liquidity_score",
+        "market_trend_score",
+        "relative_strength",
+        "relative_strength_short",
+        "beta_topix",
+        "sector_trend_score",
+        "days_to_earnings",
         "disclosure_event",
     }
 
@@ -300,9 +310,7 @@ def test_light_plan_capabilities_are_explicit() -> None:
 
 def test_invalid_security_code_registration_is_rejected() -> None:
     with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/watchlist/registrations", json={"symbol": "12-4"}
-        )
+        response = client.post("/api/v1/watchlist/registrations", json={"symbol": "12-4"})
 
     assert response.status_code == 422
     assert "4文字の半角英数字" in response.json()["detail"]
@@ -310,9 +318,7 @@ def test_invalid_security_code_registration_is_rejected() -> None:
 
 def test_removing_unknown_watchlist_item_returns_not_found() -> None:
     with TestClient(app) as client:
-        response = client.delete(
-            "/api/v1/watchlist/ZZZZ?provider=jquants"
-        )
+        response = client.delete("/api/v1/watchlist/ZZZZ?provider=jquants")
 
     assert response.status_code == 404
 
@@ -413,3 +419,42 @@ def test_position_can_be_saved_without_adding_watchlist(database_url) -> None:
     assert positions[0]["liquidity_rank"] == "unknown"
     assert positions[0]["freshness_status"] == "missing"
     assert watchlist == []
+
+
+def test_market_candidate_pagination(monkeypatch):
+    calls = []
+
+    def load_page(database_url, **kwargs):
+        calls.append(kwargs)
+        return [{"symbol": str(i)} for i in range(500)] if kwargs["offset"] == 1500 else []
+
+    monkeypatch.setattr(web_app_module, "list_market_candidates", load_page)
+    with TestClient(app) as client:
+        response = client.get("/api/v1/market-candidates?limit=500&offset=1500&horizon=20")
+        assert response.status_code == 200
+        assert response.json()["next_offset"] == 2000
+        assert client.get("/api/v1/market-candidates?offset=2000").json()["next_offset"] is None
+        assert calls[0] == {"limit": 500, "offset": 1500, "horizon_days": 20, "action": None}
+        assert client.get("/api/v1/market-candidates?offset=-1").status_code == 422
+
+
+def test_support_bands_api_uses_only_selected_end_date(monkeypatch):
+    from test_analysis import make_custom_bars
+
+    bars = make_custom_bars([
+        (100, 101, 90 if i in {25, 35, 45} else 99, 100, 1000) for i in range(55)
+    ])
+    future = replace(
+        bars[-1], trade_date=bars[-1].trade_date + timedelta(days=1),
+        open=Decimal('85'), high=Decimal('86'), low=Decimal('84'), close=Decimal('85'),
+    )
+    monkeypatch.setattr(web_app_module, 'load_daily_bars', lambda *args, **kwargs: [*bars, future])
+    with TestClient(app) as client:
+        response = client.get(
+            f'/api/v1/instruments/TEST/daily-bars?to={bars[-1].trade_date}&range=all'
+        )
+    assert response.status_code == 200
+    bands = response.json()['indicators']['support_bands']['60']
+    assert len(bands) == 1
+    assert bands[0]['center'] == 90
+    assert bands[0]['touches'] == 3

@@ -11,12 +11,14 @@ from stock_signal.analysis.base import (
     TransitionReadinessEvaluatorProtocol,
 )
 from stock_signal.analysis.decision import LongOnlyDecisionPolicy
+from stock_signal.analysis.entry_diagnostics import calculate_entry_diagnostics
 from stock_signal.analysis.horizons import get_horizon_profile
 from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.analysis.lifecycle import PatternLifecycleEvaluator
 from stock_signal.analysis.patterns import TechnicalPatternDetector
 from stock_signal.analysis.position_entry import PositionEntryEvaluator
 from stock_signal.analysis.rules import DEFAULT_RULES
+from stock_signal.analysis.swing_pullback import SwingPullbackEvaluator
 from stock_signal.analysis.transition import TransitionReadinessEvaluator
 from stock_signal.domain.analysis import (
     AnalysisContext,
@@ -36,7 +38,7 @@ class RuleBasedAnalysisEngine:
     """注入されたルールを集計する、決定論的な分析エンジン。"""
 
     engine_id = "rule_based_technical"
-    version = "2.11.0"
+    version = "2.15.0"
 
     def __init__(
         self,
@@ -164,6 +166,7 @@ class RuleBasedAnalysisEngine:
         position_entry = (
             self.position_entry_evaluator.evaluate(ordered) if horizon_days == 20 else None
         )
+        swing_pullback = SwingPullbackEvaluator().evaluate(ordered) if horizon_days == 5 else None
         checks = self.decision_policy.equity_checks(
             ordered, patterns, analysis_context, horizon_days
         )
@@ -176,6 +179,7 @@ class RuleBasedAnalysisEngine:
             position_entry,
             checks,
             horizon_days,
+            swing_pullback=swing_pullback,
         )
         return AnalysisResult(
             symbol=symbol.upper(),
@@ -192,6 +196,10 @@ class RuleBasedAnalysisEngine:
             position_entry=position_entry,
             equity_checks=checks,
             investment_decision=decision,
+            swing_pullback=swing_pullback,
+            entry_diagnostics=calculate_entry_diagnostics(
+                ordered, decision.execution_stop_price, horizon_days=horizon_days,
+            ),
         )
 
     @staticmethod

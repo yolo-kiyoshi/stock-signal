@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from secrets import compare_digest
@@ -20,6 +21,7 @@ from stock_signal.analysis.horizons import get_horizon_profile
 from stock_signal.analysis.indicators import (
     resistance_bands,
     simple_moving_average_series,
+    support_bands,
     wilder_rsi_series,
 )
 from stock_signal.analysis.service import AnalysisService
@@ -283,6 +285,17 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
 
     return {
         "research": result.research,
+        "entry_diagnostics": (
+            asdict(result.entry_diagnostics) if result.entry_diagnostics is not None else None
+        ),
+        "swing_pullback": (
+            {
+                **asdict(result.swing_pullback),
+                "phase_label": POSITION_ENTRY_PHASE_LABELS[result.swing_pullback.phase.value],
+                "score_is_probability": False,
+            }
+            if result.swing_pullback is not None else None
+        ),
         "symbol": result.symbol,
         "display_name": display_name,
         "as_of_date": result.as_of_date,
@@ -425,6 +438,7 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
             "reasons": list(decision.reasons),
             "cautions": list(decision.cautions),
             "entry_stage": decision.entry_stage.value,
+            "entry_strategy": decision.entry_strategy,
             "entry_stage_label": ENTRY_STAGE_LABELS[decision.entry_stage.value],
             "setup_score": decision.setup_score,
             "entry_score": decision.entry_score,
@@ -490,17 +504,21 @@ def market_candidates_api(
     ),
     horizon: int = Query(5),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ) -> dict[str, object]:
     _validate_horizon(horizon)
+    items = list_market_candidates(
+        settings.database_url,
+        horizon_days=horizon,
+        action=action,
+        limit=limit,
+        offset=offset,
+    )
     return {
         "scope": "market",
         "horizon_days": horizon,
-        "items": list_market_candidates(
-            settings.database_url,
-            horizon_days=horizon,
-            action=action,
-            limit=limit,
-        ),
+        "items": items,
+        "next_offset": offset + len(items) if len(items) == limit else None,
     }
 
 
@@ -743,8 +761,7 @@ async def apply_rakuten_positions(request: Request) -> dict[str, object]:
     preview["status"] = "saved"
     preview["saved_symbols"] = saved
     preview["message"] = (
-        f"国内株式{saved}銘柄を登録・更新しました。"
-        "CSVにない既存の保有銘柄は維持しています"
+        f"国内株式{saved}銘柄を登録・更新しました。CSVにない既存の保有銘柄は維持しています"
     )
     return preview
 
@@ -971,7 +988,7 @@ def daily_bars(
         for window in (14, 28)
     }
 
-    def serialize_resistance(lookback: int) -> list[dict[str, object]]:
+    def serialize_resistance(lookback: int, *, support: bool = False) -> list[dict[str, object]]:
         return [
             {
                 "lower": band.lower,
@@ -982,7 +999,9 @@ def daily_bars(
                 "last_touched": band.last_touched.isoformat(),
                 "distance_percent": band.distance_percent,
             }
-            for band in resistance_bands(calculation_bars, lookback=lookback)
+            for band in (support_bands if support else resistance_bands)(
+                calculation_bars, lookback=lookback
+            )
         ]
 
     is_adjusted = all(bar.is_adjusted or bar.symbol == "TOPIX" for bar in all_bars)
@@ -1005,7 +1024,12 @@ def daily_bars(
                 "60": serialize_resistance(60),
                 "120": serialize_resistance(120),
             },
+            "support_bands": {
+                "60": serialize_resistance(60, support=True),
+                "120": serialize_resistance(120, support=True),
+            },
             "definitions": {
+                "support": "局所安値をATRで集約した2回以上接触の候補帯。明確に下抜けた帯は除外",
                 "moving_average": "終値の単純移動平均",
                 "rsi": "Wilder平滑化RSI",
                 "resistance": (
