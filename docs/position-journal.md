@@ -26,29 +26,13 @@ PostgreSQLを正本にし、Codexで読めるJSON・Markdownを生成する。�
 
 既存仕様どおり複数口座を銘柄単位で合算する。NISA・特定口座別の売却分析は未対応。画面・資料の合算口座表記を確認する。部分CSVによる取り込みやCSV解析エラーは照合してからレビューする。
 
-## CLI
+## 資料生成と入力契約
 
-```bash
-# スキーマを追加する
- docker compose run --rm migrate
-
-# 全保有の資料を生成する（国内株式・jquantsが既定）
- docker compose run --rm --no-deps app stock-signal position-context
-
-# 指定銘柄の資料だけを生成する
- docker compose run --rm --no-deps app stock-signal position-context 7203
-
-# ストーリーとレビュー履歴を確認する
- docker compose run --rm --no-deps app stock-signal position-journal 7203
-
-# ストーリーを新しい版として保存する
- docker compose run --rm --no-deps app stock-signal thesis-save 7203 --input reports/private/thesis.json
-
-# 調査後のレビューを保存する
- docker compose run --rm --no-deps app stock-signal position-review-save --input reports/private/<資料ID>/review.json
-```
-
-ホスト側の `reports/private/<資料ID>/` とコンテナ側の `/app/reports/private/<資料ID>/` は共有される。`context.json`、`context.md`、未完成の入力用 `review.json` を生成する。未完成のレビューは必須欄検証で保存できない。資料には個人の保有情報が含まれるため `reports/private/` はGit管理対象外。資料を他の場所へ保存する場合も個人情報として管理する。画面からは同じ内容のJSONをダウンロードできる。
+`position-context`は同一DBスナップショットから`context.json`、`context.md`、入力用`review.json`を生成する。
+`position-journal`は履歴を取得し、`thesis-save`と`position-review-save`は検証済みの入力を保存する。
+未完成のレビューは必須欄検証で保存できない。画面からも資料JSONを取得できる。
+個人の保有情報を含む資料・入力JSONはGit管理対象外の`reports/private/`に置く。
+資料ファイルの編集だけではDBを更新しない。
 
 ストーリーのJSON例（例示であり、実際の投資動機に置き換える）：
 
@@ -95,6 +79,7 @@ PostgreSQLを正本にし、Codexで読めるJSON・Markdownを生成する。�
 
 ストーリーや資料の競合は409、不正な入力・不足は422。生のSQLや任意のDB変更機能は公開しない。日次の市場データ取得は既存の `MarketDataProvider` 経由を維持する。
 
-## 検証
+## 未解決事項
 
-Python 3.12のDocker Compose内で `pytest` と `ruff check .` を実行する。金融計算、欠損・古い株価・分割、ストーリー競合、CSV再取込・照合、参照資料の不変性、出典とレビューの入力検証、保存の冪等性、認証をテストする。画面はCompose内で型検査とlintを実行する。
+口座別の分析、同日中の新しい開示の検出、出典の実質的な確認は
+[未解決・残課題](open-issues.md#保有情報とチャット分析)を参照する。
