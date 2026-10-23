@@ -316,10 +316,18 @@ class DailyBatchRunner:
             }
         return summary
 
+    def reanalyze_market(self) -> BatchItemResult:
+        """外部取得を行わず、保存データから両期間の候補を一括再分析する。"""
+        check_database(self.settings.database_url)
+        with BatchDatabaseLock(self.settings.database_url):
+            return self._screen_market(sync_financials=False)
+
     def _screen_market(
         self,
         providers: dict[str, MarketDataProvider] | None = None,
         already_synced: set[str] | None = None,
+        *,
+        sync_financials: bool = True,
     ) -> BatchItemResult:
         """流動性上位の全市場銘柄をスイング・中長期基準で分析して保存する。"""
         try:
@@ -351,6 +359,7 @@ class DailyBatchRunner:
             financial_results = [
                 self._sync_financials(symbol, providers)
                 for symbol in sorted(shortlist - already_synced)
+                if sync_financials
             ]
             inputs = ResearchInputs(self.settings.database_url)
             stored = 0

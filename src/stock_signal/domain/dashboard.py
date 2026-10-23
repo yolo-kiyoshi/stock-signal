@@ -24,6 +24,10 @@ class WatchlistItem:
     latest_trade_date: str | None = None
     data_age_days: int | None = None
     freshness_status: str = "missing"
+    capital_stock: Decimal | None = None
+    employees: int | None = None
+    sales: Decimal | None = None
+    market_cap: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +94,10 @@ class Position:
     median_turnover: Decimal | None = None
     data_age_days: int | None = None
     freshness_status: str = "missing"
+    capital_stock: Decimal | None = None
+    employees: int | None = None
+    sales: Decimal | None = None
+    market_cap: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

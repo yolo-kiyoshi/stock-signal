@@ -231,7 +231,7 @@ def test_daily_batch_fetches_only_after_latest_date_and_records_run(database_url
         "avoid_new_buy",
         "insufficient_data",
     }
-    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.15.0"
+    assert result.items[0].analysis_summary["5"]["engine_version"] == "2.16.0"
 
 
 def test_failure_of_one_symbol_does_not_discard_other_symbol(database_url) -> None:
@@ -346,7 +346,7 @@ def test_light_batch_syncs_market_and_stores_screening(database_url) -> None:
     assert candidates[0]["transition_total"] >= 4
     assert candidates[0]["entry_diagnostics"]["current_price"] > 0
     assert candidates[0]["entry_diagnostics"]["return_20d_percent"] is not None
-    assert candidates[0]["engine_version"] == "2.15.0"
+    assert candidates[0]["engine_version"] == "2.16.0"
 
 
 def test_daily_market_sync_overwrites_recent_two_weeks(database_url) -> None:

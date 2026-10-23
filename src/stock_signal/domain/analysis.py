@@ -9,6 +9,9 @@ if TYPE_CHECKING:
     from stock_signal.domain.market_data import DailyBar
 
 
+ANALYSIS_ENGINE_VERSION = "2.16.0"
+
+
 class Direction(StrEnum):
     """チャート分析の判定方向。"""
 

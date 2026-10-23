@@ -54,7 +54,15 @@ def load_risk_settings(database_url: str) -> dict | None:
 
 def save_risk_settings(database_url: str, payload: dict) -> None:
     """検証済みの資金設定を保存する。"""
+    from stock_signal.database import DEFAULT_PORTFOLIO
+    from stock_signal.persistence.schema import portfolios
+
     with get_engine(database_url).begin() as connection:
+        connection.execute(
+            select(portfolios.c.id)
+            .where(portfolios.c.name == DEFAULT_PORTFOLIO)
+            .with_for_update()
+        )
         invalidate_candidate_snapshots(connection)
         connection.execute(
             insert(portfolio_risk_settings)

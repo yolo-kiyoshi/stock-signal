@@ -15,6 +15,10 @@ export type InstrumentListItem = {
   latest_trade_date?: string | null;
   data_age_days?: number | null;
   freshness_status?: "fresh" | "stale" | "missing";
+  capital_stock?: string | null;
+  employees?: number | null;
+  sales?: string | null;
+  market_cap?: string | null;
 };
 
 export type PositionItem = InstrumentListItem & {
@@ -29,6 +33,7 @@ export type PositionItem = InstrumentListItem & {
 export type RakutenImportResponse = {
   status: "ready" | "saved";
   source: "rakuten_asset_balance";
+  missing_positions: Array<{ symbol: string; provider: string; display_name: string; quantity: string }>;
   encoding: string;
   summary: {
     detail_rows: number;
@@ -48,6 +53,8 @@ export type RakutenImportResponse = {
     average_cost: string | null;
     account_type: string;
     source_rows: number;
+    previous_quantity?: string | null;
+    previous_average_cost?: string | null;
     status: "ready" | "master_missing";
     message: string;
   }>;

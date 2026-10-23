@@ -39,6 +39,25 @@ def build_parser() -> argparse.ArgumentParser:
         description="日本株の日次テクニカル分析",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    context_parser = subparsers.add_parser(
+        "position-context", help="Codex向けの保有資料を保存データから生成する"
+    )
+    context_parser.add_argument("symbols", nargs="*", help="省略時は全保有銘柄")
+    context_parser.add_argument("--provider", default="jquants")
+    context_parser.add_argument("--output-dir", type=Path, default=Path("reports/private"))
+    thesis_parser = subparsers.add_parser("thesis-save", help="投資ストーリーを新しい版として保存")
+    thesis_parser.add_argument("symbol")
+    thesis_parser.add_argument("--provider", default="jquants")
+    thesis_parser.add_argument("--input", type=Path, required=True)
+    review_parser = subparsers.add_parser(
+        "position-review-save", help="Codexの分析結果を検証して保存"
+    )
+    review_parser.add_argument("--input", type=Path, required=True)
+    journal_parser = subparsers.add_parser(
+        "position-journal", help="ストーリーとレビュー履歴を表示"
+    )
+    journal_parser.add_argument("symbol")
+    journal_parser.add_argument("--provider", default="jquants")
 
     financial_parser = subparsers.add_parser(
         "financial-sync", help="Lightの財務履歴をウォッチ・保有銘柄へ同期する"
@@ -132,6 +151,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("reports"),
     )
 
+    subparsers.add_parser(
+        "reanalyze-market", help="保存データだけで全市場候補を再分析する（外部取得なし）"
+    )
+
     daily_parser = subparsers.add_parser("daily", help="日次分析パイプラインを実行する")
     daily_parser.add_argument(
         "--dry-run",
@@ -146,6 +169,47 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_command(args: argparse.Namespace, settings: Settings) -> int:
+    if args.command in {
+        "position-context", "thesis-save", "position-review-save", "position-journal",
+    }:
+        from stock_signal.database import list_positions
+        from stock_signal.position_journal import (
+            ReviewInput,
+            ThesisInput,
+            create_context,
+            export_context,
+            journal,
+            save_review,
+            save_thesis,
+        )
+
+        if args.command == "position-context":
+            symbols = args.symbols or [
+                p.symbol for p in list_positions(settings.database_url)
+                if p.provider == args.provider and p.quantity > 0
+            ]
+            for symbol in dict.fromkeys(symbols):
+                payload = create_context(settings.database_url, symbol.upper(), args.provider)
+                print(export_context(payload, args.output_dir))
+            if not symbols:
+                print("対象の保有銘柄がありません")
+        elif args.command == "position-journal":
+            print(json.dumps(journal(settings.database_url, args.symbol.upper(), args.provider),
+                             ensure_ascii=False, indent=2))
+        else:
+            try:
+                raw = args.input.read_text(encoding="utf-8")
+                if args.command == "thesis-save":
+                    result = save_thesis(settings.database_url, args.symbol.upper(), args.provider,
+                                         ThesisInput.model_validate_json(raw))
+                else:
+                    result = save_review(
+                        settings.database_url, ReviewInput.model_validate_json(raw)
+                    )
+            except OSError as error:
+                raise ValueError("入力JSONファイルを読み込めません") from error
+            print(json.dumps({"id": result["id"], "status": "saved"}, ensure_ascii=False))
+        return 0
     if args.command == "financial-sync":
         from stock_signal.database import list_positions
         from stock_signal.providers.factory import create_market_data_provider_for
@@ -411,6 +475,12 @@ def _run_command(args: argparse.Namespace, settings: Settings) -> int:
         ).run()
         print(json.dumps(market_regime_as_dict(snapshot), ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "reanalyze-market":
+        result = DailyBatchRunner(settings).reanalyze_market()
+        print(json.dumps({"status": result.status, "symbols": result.received,
+                          "snapshots": result.upserted}, ensure_ascii=False))
+        return 0 if result.status in {"success", "no_updates"} else 1
 
     if args.command == "daily":
         if args.dry_run:

@@ -41,6 +41,7 @@ __pycache__/
 /data/*.sqlite3
 /models/*.joblib
 /reports/*.html
+/reports/private/
 
 # OS・エディター・一時ファイル
 .DS_Store

@@ -17,10 +17,12 @@ from stock_signal.analysis.indicators import wilder_atr
 from stock_signal.analysis.lifecycle import PatternLifecycleEvaluator
 from stock_signal.analysis.patterns import TechnicalPatternDetector
 from stock_signal.analysis.position_entry import PositionEntryEvaluator
+from stock_signal.analysis.resistance_gate import apply_breakout_resistance_gate
 from stock_signal.analysis.rules import DEFAULT_RULES
 from stock_signal.analysis.swing_pullback import SwingPullbackEvaluator
 from stock_signal.analysis.transition import TransitionReadinessEvaluator
 from stock_signal.domain.analysis import (
+    ANALYSIS_ENGINE_VERSION,
     AnalysisContext,
     AnalysisFactor,
     AnalysisResult,
@@ -38,7 +40,7 @@ class RuleBasedAnalysisEngine:
     """注入されたルールを集計する、決定論的な分析エンジン。"""
 
     engine_id = "rule_based_technical"
-    version = "2.15.0"
+    version = ANALYSIS_ENGINE_VERSION
 
     def __init__(
         self,
@@ -181,6 +183,10 @@ class RuleBasedAnalysisEngine:
             horizon_days,
             swing_pullback=swing_pullback,
         )
+        decision, resistance_checks = apply_breakout_resistance_gate(
+            decision, ordered, horizon_days,
+        )
+        checks += resistance_checks
         return AnalysisResult(
             symbol=symbol.upper(),
             as_of_date=as_of_date,

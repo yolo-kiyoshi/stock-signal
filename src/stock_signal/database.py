@@ -11,6 +11,7 @@ from statistics import median
 from sqlalchemy import case, delete, func, insert, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from stock_signal.domain.analysis import ANALYSIS_ENGINE_VERSION
 from stock_signal.domain.batch import BatchItemResult
 from stock_signal.domain.dashboard import (
     Instrument,
@@ -36,6 +37,7 @@ from stock_signal.persistence.schema import (
     daily_bars,
     data_sync_status,
     earnings_calendar,
+    financial_disclosures,
     instruments,
     market_observations,
     market_regime_snapshots,
@@ -98,6 +100,10 @@ def _load_sidebar_metrics(
             "latest_close": None,
             "median_turnover": None,
             "next_earnings_date": None,
+            "capital_stock": None,
+            "employees": None,
+            "sales": None,
+            "market_cap": None,
         }
         for pair in pairs
     }
@@ -112,6 +118,48 @@ def _load_sidebar_metrics(
     for pair, values in turnovers.items():
         if len(values) >= 20:
             metrics[pair]["median_turnover"] = median(values)
+
+    disclosure_rows = connection.execute(
+        select(
+            financial_disclosures.c.symbol,
+            financial_disclosures.c.provider,
+            financial_disclosures.c.payload,
+            financial_disclosures.c.disclosed_date,
+        )
+        .where(tuple_(financial_disclosures.c.symbol, financial_disclosures.c.provider).in_(pairs))
+        .order_by(financial_disclosures.c.disclosed_date.desc())
+    ).mappings()
+    seen_disclosures: set[tuple[str, str]] = set()
+    for row in disclosure_rows:
+        pair = (row["symbol"], row["provider"])
+        if pair in seen_disclosures:
+            continue
+        payload = row["payload"] or {}
+        if not isinstance(payload, dict):
+            continue
+
+        def decimal_value(payload: dict, *keys: str) -> Decimal | None:
+            for key in keys:
+                value = payload.get(key)
+                if value in (None, "", "-"):
+                    continue
+                try:
+                    result = Decimal(str(value))
+                except Exception:
+                    continue
+                if result.is_finite():
+                    return result
+            return None
+
+        def integer_value(payload: dict, *keys: str) -> int | None:
+            value = decimal_value(payload, *keys)
+            return int(value) if value is not None and value == value.to_integral_value() else None
+
+        metrics[pair]["capital_stock"] = decimal_value(payload, "Cap", "CapitalStock")
+        metrics[pair]["employees"] = integer_value(payload, "NumOfEmployees", "Employees")
+        metrics[pair]["sales"] = decimal_value(payload, "Sales", "Revenue")
+        metrics[pair]["market_cap"] = decimal_value(payload, "MarketCap", "MktCap")
+        seen_disclosures.add(pair)
 
     earnings_rows = connection.execute(
         select(
@@ -681,6 +729,10 @@ def list_watchlist_items(
                 latest_trade_date=latest_date.isoformat() if latest_date else None,
                 data_age_days=age_days,
                 freshness_status=freshness_status,
+                capital_stock=item_metrics["capital_stock"],
+                employees=item_metrics["employees"],
+                sales=item_metrics["sales"],
+                market_cap=item_metrics["market_cap"],
             )
         )
     return result
@@ -1201,6 +1253,30 @@ def list_market_candidates(
         )
         .scalar_subquery()
     )
+    latest_price_date = (
+        select(func.max(daily_bars.c.trade_date))
+        .where(
+            daily_bars.c.symbol == analysis_snapshots.c.symbol,
+            daily_bars.c.provider == analysis_snapshots.c.provider,
+        )
+        .correlate(analysis_snapshots)
+        .scalar_subquery()
+    )
+    # 判定仕様変更後の旧候補を、SQLの絞り込み・ページ分割より先に保留する。
+    needs_reanalysis = (
+        func.coalesce(analysis_snapshots.c.analysis_json["engine_version"].astext, "")
+        != ANALYSIS_ENGINE_VERSION
+    ) | (
+        func.coalesce(analysis_snapshots.c.analysis_json["research_stale"].astext, "false")
+        == "true"
+    ) | (
+        analysis_snapshots.c.as_of_date
+        < func.coalesce(latest_price_date, analysis_snapshots.c.as_of_date)
+    ) | (analysis_snapshots.c.as_of_date < date.today() - timedelta(days=4))
+    effective_action = case(
+        (needs_reanalysis & (analysis_snapshots.c.action == "buy_candidate"), "watch"),
+        else_=analysis_snapshots.c.action,
+    )
     statement = (
         select(
             analysis_snapshots.c.symbol,
@@ -1208,7 +1284,8 @@ def list_market_candidates(
             analysis_snapshots.c.provider,
             analysis_snapshots.c.as_of_date,
             analysis_snapshots.c.direction,
-            analysis_snapshots.c.action,
+            effective_action.label("action"),
+            needs_reanalysis.label("needs_reanalysis"),
             analysis_snapshots.c.evidence_score,
             instruments.c.market,
             instruments.c.instrument_type,
@@ -1230,7 +1307,7 @@ def list_market_candidates(
         )
     )
     if action:
-        statement = statement.where(analysis_snapshots.c.action == action)
+        statement = statement.where(effective_action == action)
     statement = (
         statement.order_by(
             analysis_snapshots.c.evidence_score.desc(),
@@ -1273,16 +1350,24 @@ def list_market_candidates(
                 "as_of_date": row["as_of_date"].isoformat(),
                 "direction": row["direction"],
                 "action": row["action"],
-                "technical_action": research.get("technical_action"),
+                "technical_action": (
+                    None if row["needs_reanalysis"] else research.get("technical_action")
+                ),
                 "screening_status": (
                     "needs_reanalysis"
-                    if analysis_data.get("research_stale")
+                    if row["needs_reanalysis"]
                     else research.get("screening_status", "unknown")
                 ),
-                "judgment_reason": analysis_data.get("summary"),
+                "judgment_reason": (
+                    "判定条件が更新されたため再分析待ちです。購入条件は未確認です"
+                    if row["needs_reanalysis"] else analysis_data.get("summary")
+                ),
                 "financial_status": research.get("financials", {}).get("status", "missing"),
                 "evidence_score": row["evidence_score"],
-                "entry_stage": analysis_data.get("entry_stage", fallback_stage),
+                "entry_stage": (
+                    "not_applicable" if row["needs_reanalysis"]
+                    else analysis_data.get("entry_stage", fallback_stage)
+                ),
                 "entry_score": analysis_data.get("entry_score"),
                 "entry_strategy": analysis_data.get("entry_strategy"),
                 "entry_diagnostics": analysis_data.get("entry_diagnostics"),
@@ -1303,6 +1388,10 @@ def list_market_candidates(
                 "latest_trade_date": latest_trade_date.isoformat() if latest_trade_date else None,
                 "data_age_days": data_age_days,
                 "freshness_status": freshness_status,
+                "capital_stock": item_metrics["capital_stock"],
+                "employees": item_metrics["employees"],
+                "sales": item_metrics["sales"],
+                "market_cap": item_metrics["market_cap"],
                 "transition_phase": transition.get("phase", "unknown"),
                 "transition_summary": transition.get("summary"),
                 "transition_satisfied": transition.get("satisfied_conditions"),
@@ -1335,15 +1424,15 @@ def upsert_position(
     with get_engine(database_url).begin() as connection:
         from stock_signal.research_store import invalidate_candidate_snapshots
 
-        invalidate_candidate_snapshots(connection)
         connection.execute(
             pg_insert(portfolios)
             .values(name=portfolio_name, base_currency="JPY")
             .on_conflict_do_nothing(index_elements=[portfolios.c.name])
         )
         portfolio_id = connection.scalar(
-            select(portfolios.c.id).where(portfolios.c.name == portfolio_name)
+            select(portfolios.c.id).where(portfolios.c.name == portfolio_name).with_for_update()
         )
+        invalidate_candidate_snapshots(connection)
         statement = pg_insert(positions).values(
             portfolio_id=portfolio_id,
             symbol=symbol.strip().upper(),
@@ -1377,6 +1466,8 @@ def bulk_upsert_positions(
     database_url: str,
     records: list[dict[str, object]],
     portfolio_name: str = DEFAULT_PORTFOLIO,
+    *,
+    import_metadata: dict | None = None,
 ) -> int:
     """検証済みの保有残高を一つのトランザクションで登録・更新する。"""
     if not records:
@@ -1396,15 +1487,15 @@ def bulk_upsert_positions(
     with get_engine(database_url).begin() as connection:
         from stock_signal.research_store import invalidate_candidate_snapshots
 
-        invalidate_candidate_snapshots(connection)
         connection.execute(
             pg_insert(portfolios)
             .values(name=portfolio_name, base_currency="JPY")
             .on_conflict_do_nothing(index_elements=[portfolios.c.name])
         )
         portfolio_id = connection.scalar(
-            select(portfolios.c.id).where(portfolios.c.name == portfolio_name)
+            select(portfolios.c.id).where(portfolios.c.name == portfolio_name).with_for_update()
         )
+        invalidate_candidate_snapshots(connection)
         values = [
             {
                 "portfolio_id": portfolio_id,
@@ -1434,6 +1525,10 @@ def bulk_upsert_positions(
                 },
             )
         )
+        if import_metadata is not None:
+            from stock_signal.position_journal import record_import
+
+            record_import(connection, portfolio_id, import_metadata)
     return len(records)
 
 
@@ -1507,6 +1602,10 @@ def list_positions(
                 median_turnover=item_metrics["median_turnover"],
                 data_age_days=age_days,
                 freshness_status=freshness_status,
+                capital_stock=item_metrics["capital_stock"],
+                employees=item_metrics["employees"],
+                sales=item_metrics["sales"],
+                market_cap=item_metrics["market_cap"],
             )
         )
     return result
@@ -1521,10 +1620,10 @@ def remove_position(
     with get_engine(database_url).begin() as connection:
         from stock_signal.research_store import invalidate_candidate_snapshots
 
-        invalidate_candidate_snapshots(connection)
         portfolio_id = connection.scalar(
-            select(portfolios.c.id).where(portfolios.c.name == portfolio_name)
+            select(portfolios.c.id).where(portfolios.c.name == portfolio_name).with_for_update()
         )
+        invalidate_candidate_snapshots(connection)
         if portfolio_id is None:
             return False
         result = connection.execute(

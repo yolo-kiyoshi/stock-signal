@@ -254,6 +254,28 @@ def test_financial_provider_paginates_and_never_uses_premium_cursor():
     assert http.calls[1][1] == {"code": "7203", "pagination_key": "next"}
 
 
+def test_financial_summary_keeps_sidebar_metrics_when_available():
+    from stock_signal.fundamentals import normalize_summary
+
+    record = normalize_summary(
+        {
+            "Code": "72030",
+            "DiscNo": "1",
+            "DiscDate": "2026-08-01",
+            "DocType": "FinancialStatements",
+            "Sales": 123456,
+            "Cap": 9876,
+            "NumOfEmployees": 321,
+            "MarketCap": 456789,
+        }
+    )
+    assert record["Code"] == "7203"
+    assert record["Sales"] == "123456"
+    assert record["Cap"] == "9876"
+    assert record["NumOfEmployees"] == "321"
+    assert record["MarketCap"] == "456789"
+
+
 def test_financial_provider_rejects_bad_payload():
     class Http:
         def get_json(self, *args, **kwargs):

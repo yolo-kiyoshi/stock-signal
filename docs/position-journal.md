@@ -1,0 +1,100 @@
+# 保有銘柄の投資ストーリーとCodexレビュー
+
+## 目的と構成
+
+PostgreSQLを正本にし、Codexで読めるJSON・Markdownを生成する。アプリからLLM APIを呼ばず、チャット内で最新情報を調査・分析する。Codex自体の利用枠・契約条件は別。自動売買・外部通知は行わない。既存の有料APIを使う「AI最終確認」は独立した従来機能で、この経路では呼ばない。
+
+保有画面の銘柄詳細に「投資ストーリーとチャット分析」を表示する。日足未取得でもストーリーを登録できる。ストーリーの全履歴、直近30件のレビューと出典を表示する。レビューがない場合に分析区分や確率を生成・表示しない。
+
+## 保存データ
+
+- `positions`：現在の数量・平均取得価格。従来の楽天証券CSV取り込みを利用する。
+- `portfolio_imports`：取込日時、任意の保有基準日、取り込んだ残高、取込後の全保有、CSVにない既存保有、解析エラー。元CSVは保存しない。残高更新と同じトランザクションで追記する。
+- `investment_theses`：銘柄・取得元・ポートフォリオごとの投資ストーリー。版番号による楽観ロックとポートフォリオの行ロックで重複更新を防ぐ。削除・上書きせず追記する。CSV再取込で消えない。
+- `position_review_contexts`：同一DBスナップショットから生成した全保有、ストーリーの版、資金設定、実価格、金融計算、保存済みテクニカル、直近12件の財務開示、前回レビュー。外部サービスを呼ばない。後から保有や仮説が変わっても資料は変更しない。
+- `position_reviews`：資料IDに紐づく分析区分・根拠・反対材料・次の条件・未確認事項・出典。資料ごとに一件。同じJSONの再保存は同じ結果を返し、異なる内容での上書きは拒否する。
+
+履歴は保有一覧から削除しても残る。再保有時は既存の仮説・レビューを確認したうえで新しい版を追加できる。テキストは交換用であり、直接編集してもDBには反映しない。CLI/APIで検証して保存する。
+
+## CSV差分と基準日
+
+プレビューは前回と今回の数量・平均取得価格と、CSVに見当たらない既存保有を表示する。CSVにないだけで売却済みとは断定せず、自動削除しない。売却済みなら従来の保有削除ボタンで照合する。解析エラーでコードが分かる行は「CSVにない」と誤表示しない。
+
+保有基準日は利用者がCSVの時点を確認して入力する。未来日は拒否する。空欄を取り込み日時や購入日で補完しない。基準日不明ではレビュー資料の評価額・損益を未算出にする。基準日以降の分割等、基準日より古い株価、未来の株価、4暦日超古い株価でも算出しない。株価は実価格を用い、調整済み価格しかないときは未算出とする。
+
+評価額 = 保有数量 × 実価格。含み損益 = 保有数量 ×（実価格 − 平均取得価格）。Decimalで計算し、JSONでは文字列にする。含み損益は手数料・税・配当・実現損益を含まない。取得価格不明では損益だけ未算出。総資産に対する保有比率もDecimalで算出し、総資産未登録や対象評価額と現金だけで総資産を超える不整合時は未算出とする。保有基準日や数量をユーザーが正しく入力したことを前提とする。
+
+既存仕様どおり複数口座を銘柄単位で合算する。NISA・特定口座別の売却分析は未対応。画面・資料の合算口座表記を確認する。部分CSVによる取り込みやCSV解析エラーは照合してからレビューする。
+
+## CLI
+
+```bash
+# スキーマを追加する
+ docker compose run --rm migrate
+
+# 全保有の資料を生成する（国内株式・jquantsが既定）
+ docker compose run --rm --no-deps app stock-signal position-context
+
+# 指定銘柄の資料だけを生成する
+ docker compose run --rm --no-deps app stock-signal position-context 7203
+
+# ストーリーとレビュー履歴を確認する
+ docker compose run --rm --no-deps app stock-signal position-journal 7203
+
+# ストーリーを新しい版として保存する
+ docker compose run --rm --no-deps app stock-signal thesis-save 7203 --input reports/private/thesis.json
+
+# 調査後のレビューを保存する
+ docker compose run --rm --no-deps app stock-signal position-review-save --input reports/private/<資料ID>/review.json
+```
+
+ホスト側の `reports/private/<資料ID>/` とコンテナ側の `/app/reports/private/<資料ID>/` は共有される。`context.json`、`context.md`、未完成の入力用 `review.json` を生成する。未完成のレビューは必須欄検証で保存できない。資料には個人の保有情報が含まれるため `reports/private/` はGit管理対象外。資料を他の場所へ保存する場合も個人情報として管理する。画面からは同じ内容のJSONをダウンロードできる。
+
+ストーリーのJSON例（例示であり、実際の投資動機に置き換える）：
+
+```json
+{
+  "expected_version": 0,
+  "story": "購入時に想定していた成長要因を記載",
+  "horizon": "想定期間を記載",
+  "indicators": "追跡する指標を記載",
+  "support_conditions": "想定どおりと判断する条件を記載",
+  "invalidation_conditions": "見直す条件を記載",
+  "position_constraints": "",
+  "change_reason": "初回登録",
+  "investment_date": null
+}
+```
+
+レビューJSONの必須欄は生成したテンプレートに記載する。`decision` は `increase/reduce/hold/defer`、`thesis_assessment` は `strengthened/unchanged/weakened/unknown`。本文は日本語。`evidence` の各要素は以下の構造を持つ。
+
+```json
+{
+  "title": "実際に確認した資料名",
+  "url": "https://example.com/ir",
+  "published_date": null,
+  "event_date": null,
+  "checked_at": "実際の確認日時をISO 8601・タイムゾーン付きで記載",
+  "finding": "この出典が裏付ける事実"
+}
+```
+
+`researched_at` も実際の調査完了日時をタイムゾーン付きで記載する。確認日と公表日は異なる。出典の確認日時が調査完了日時より後、未来の確認日時・公表日、資料生成前の調査、24時間超前の調査は拒否する。保留以外は出典が必須。ストーリー・残高照合・評価額の前提不足があれば保留だけ受け付ける。増額検討には登録済みの整合する総資産・資金制約と、現金・銘柄上限の余力が必要。業種集中や事業リスクもチャットで確認する。未知の入力欄（独自の確率欄など）は拒否する。
+
+保有・ストーリー・資金設定・取込履歴が資料生成後に変わった場合、保存を拒否して再生成を求める。過去の保存済みレビューもこれらの変更や日付変更で「再確認が必要」と表示する。同じ日でも新しい開示が出た場合などは自動的な最新性を保証しない。再調査して新しい資料・レビューを保存する。URL形式の検証は出典の真実性を保証しないため、チャットで実際に開いて確認する。
+
+## API
+
+既存のFastAPI Bearer認証とNext.jsの本人認証・同一オリジン検証を通す。
+
+- `GET /api/v1/portfolio/journal/{symbol}?provider=jquants`
+- `POST /api/v1/portfolio/journal/{symbol}/theses?provider=jquants`
+- `POST /api/v1/portfolio/journal/{symbol}/context?provider=jquants`
+- `POST /api/v1/portfolio/reviews`
+- `POST /api/v1/portfolio/imports/rakuten/apply?holdings_as_of=YYYY-MM-DD`
+
+ストーリーや資料の競合は409、不正な入力・不足は422。生のSQLや任意のDB変更機能は公開しない。日次の市場データ取得は既存の `MarketDataProvider` 経由を維持する。
+
+## 検証
+
+Python 3.12のDocker Compose内で `pytest` と `ruff check .` を実行する。金融計算、欠損・古い株価・分割、ストーリー競合、CSV再取込・照合、参照資料の不変性、出典とレビューの入力検証、保存の冪等性、認証をテストする。画面はCompose内で型検査とlintを実行する。

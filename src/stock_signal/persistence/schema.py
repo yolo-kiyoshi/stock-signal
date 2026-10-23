@@ -24,6 +24,46 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 metadata = MetaData()
 
+portfolio_imports = Table(
+    "portfolio_imports", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.id"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("payload", JSONB, nullable=False),
+)
+
+investment_theses = Table(
+    "investment_theses", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.id"), nullable=False),
+    Column("symbol", String(12), nullable=False),
+    Column("provider", String(40), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("payload", JSONB, nullable=False),
+    UniqueConstraint("portfolio_id", "symbol", "provider", "version"),
+)
+
+position_review_contexts = Table(
+    "position_review_contexts", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("portfolio_id", Integer, ForeignKey("portfolios.id"), nullable=False),
+    Column("symbol", String(12), nullable=False),
+    Column("provider", String(40), nullable=False),
+    Column("thesis_id", String(36), ForeignKey("investment_theses.id")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("payload", JSONB, nullable=False),
+)
+
+position_reviews = Table(
+    "position_reviews", metadata,
+    Column("id", String(36), primary_key=True),
+    Column("context_id", String(36), ForeignKey("position_review_contexts.id"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("payload", JSONB, nullable=False),
+    UniqueConstraint("context_id"),
+)
+
 app_metadata = Table(
     "app_metadata",
     metadata,

@@ -281,11 +281,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .instrument:hover { background: var(--surface-soft); }
 .instrument.active { background: var(--accent-soft); border-color: #e7c3af; }
 .instrument-copy { display: flex; flex-direction: column; font-size: 11px; min-width: 0; overflow: hidden; }
-.candidate-strategy { color: var(--muted); font-weight: 600; margin-top: 7px; }
-.instrument-list.candidate-list { flex: 1 0 240px; min-height: 240px; }
 .candidate-list .instrument { flex-direction: column; }
 .candidate-list .instrument-copy { width: 100%; }
-.candidate-list .instrument-status { align-items: flex-start; max-width: none; order: -1; }
+.candidate-list .instrument-status { align-items: flex-start; max-width: none; }
 .entry-diagnostics { display: flex; flex-direction: column; gap: 3px; line-height: 1.5; margin-top: 6px; overflow-wrap: anywhere; font-size: 11px; }
 .entry-diagnostics-date { opacity: .7; }
 .instrument-symbol-line { align-items: center; display: flex; gap: 5px; min-width: 0; }
@@ -662,6 +660,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .list-results-toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; margin-top: 8px; }
 .list-results-toolbar > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .list-results-toolbar strong { color: var(--ink); }
+.list-sort-control { align-items: center; color: var(--muted); display: inline-flex; font-size: 10px; gap: 5px; }
+.list-sort-control select { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font-size: 11px; min-height: 32px; padding: 4px 7px; }
 .instrument .pending-label { background: #f3ecd9; border-radius: 5px; color: #70591f; padding: 3px 6px; }
 .empty-list strong { color: var(--ink); font-size: 12px; }
 .empty-list p { line-height: 1.7; }
@@ -669,8 +669,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .list-filter-grid label { font-size: 10px; }
 .list-filter-grid select { font-size: 11px; min-height: 32px; }
 
-.sidebar-content { overflow-y: auto; }
-.instrument-list { flex: 1 0 160px; min-height: 160px; }
+.sidebar-content { overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior-y: contain; }
+.instrument-list { flex: 0 0 auto; min-height: 0; overflow-y: visible; scrollbar-gutter: auto; }
+.candidate-overview { margin-bottom: 10px; }
+.candidate-overview > summary { color: var(--muted); cursor: pointer; font-size: 11px; padding: 5px 0; }
+.candidate-overview > summary span { display: block; font-size: 10px; margin-top: 3px; }
+.candidate-overview[open] > summary { margin-bottom: 8px; }
+.instrument:focus-visible, .row-action:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .instrument-status { align-items: flex-end; display: flex; flex: 0 0 auto; flex-direction: column; gap: 5px; max-width: 92px; }
 .instrument-status small { font-size: 10px; line-height: 1.5; }
 @media (max-width: 760px) {
@@ -678,3 +683,30 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .instrument-list { flex: 0 0 auto; overflow-y: visible; }
 }
 .instrument-status small { max-width: 100%; white-space: normal; }
+
+/* 候補条件と参考値を分けて比較する。 */
+.risk-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px 0; border-block: 1px solid var(--line); }
+.risk-comparison > span { display: flex; flex-direction: column; gap: 4px; }
+.risk-comparison > span:last-child { grid-column: 2; }
+.decision-warning { background: #f3ecd9; color: #70591f; padding: 10px; border-radius: 8px; font-size: 12px; line-height: 1.6; }
+.decision-warning > strong { font-size: 12px; }
+.decision-warning ul { margin: 5px 0 0; padding-left: 18px; }
+
+.entry-stage-card > small { display: block; margin-top: 6px; }
+.position-journal { margin: 1rem 0; }
+.position-journal details { margin: 1rem 0; }
+.position-journal summary { cursor: pointer; font-weight: 600; }
+.position-journal button { border: 1px solid var(--line); border-radius: 12px; padding: 9px 14px; background: var(--surface-soft); cursor: pointer; font-size: 13px; font-weight: 600; }
+.position-journal button:disabled { cursor: wait; opacity: .6; }
+.position-journal button[type="submit"] { background: var(--ink); color: white; }
+.position-journal .section-heading { gap: 1rem; flex-wrap: wrap; }
+.journal-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
+.journal-form label { display: grid; gap: .4rem; }
+.journal-form label:first-child { grid-column: 1 / -1; }
+.journal-form textarea { width: 100%; min-height: 4rem; resize: vertical; padding: .7rem; font: inherit; color: inherit; background: var(--surface-soft); border: 1px solid var(--line); border-radius: .5rem; }
+.journal-form input { padding: .7rem; background: var(--surface-soft); border: 1px solid var(--line); border-radius: .5rem; color: var(--ink); }
+.journal-form textarea:focus-visible, .journal-form input:focus-visible, .position-journal button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.journal-form button { justify-self: start; }
+.journal-history { border-top: 1px solid var(--line); padding-top: 1rem; overflow-wrap: anywhere; }
+.journal-history p { white-space: pre-wrap; }
+@media (max-width: 700px) { .journal-form { grid-template-columns: 1fr; } }

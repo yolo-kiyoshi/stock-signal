@@ -54,6 +54,7 @@ from stock_signal.importers.rakuten import (
 )
 from stock_signal.market_environment import market_regime_as_dict
 from stock_signal.persistence.engine import check_database
+from stock_signal.web.position_journal import journal_router
 
 settings = Settings.from_env()
 analysis_service = AnalysisService(settings.database_url, jquants_plan=settings.jquants_plan)
@@ -74,6 +75,7 @@ app = FastAPI(
     version="0.10.0",
     lifespan=lifespan,
 )
+app.include_router(journal_router(settings.database_url))
 
 
 @app.middleware("http")
@@ -490,6 +492,12 @@ def watchlist() -> dict[str, object]:
                 "latest_trade_date": item.latest_trade_date,
                 "data_age_days": item.data_age_days,
                 "freshness_status": item.freshness_status,
+                "capital_stock": (
+                    str(item.capital_stock) if item.capital_stock is not None else None
+                ),
+                "employees": item.employees,
+                "sales": str(item.sales) if item.sales is not None else None,
+                "market_cap": str(item.market_cap) if item.market_cap is not None else None,
             }
             for item in items
         ],
@@ -646,6 +654,12 @@ def portfolio_positions() -> dict[str, object]:
                 else None,
                 "data_age_days": item.data_age_days,
                 "freshness_status": item.freshness_status,
+                "capital_stock": (
+                    str(item.capital_stock) if item.capital_stock is not None else None
+                ),
+                "employees": item.employees,
+                "sales": str(item.sales) if item.sales is not None else None,
+                "market_cap": str(item.market_cap) if item.market_cap is not None else None,
             }
             for item in items
         ]
@@ -697,6 +711,25 @@ def _prepare_rakuten_import(parsed: RakutenCsvResult) -> tuple[dict[str, object]
             )
 
     ignored_rows = sum(parsed.skipped_types.values())
+    existing = list_positions(settings.database_url)
+    csv_symbols = {position.symbol for position in parsed.positions}
+    csv_symbols.update(issue.symbol for issue in parsed.issues if issue.symbol)
+    missing_positions = [
+        {"symbol": item.symbol, "provider": item.provider,
+         "display_name": item.display_name, "quantity": str(item.quantity)}
+        for item in existing
+        if item.provider == "jquants" and item.symbol not in csv_symbols and item.quantity > 0
+    ]
+    existing_by_key = {(item.symbol, item.provider): item for item in existing}
+    for item in preview_items:
+        instrument = matched_by_symbol.get(item["symbol"])
+        previous = (
+            existing_by_key.get((item["symbol"], instrument.provider)) if instrument else None
+        )
+        item["previous_quantity"] = str(previous.quantity) if previous else None
+        item["previous_average_cost"] = (
+            str(previous.average_cost) if previous and previous.average_cost is not None else None
+        )
     summary = {
         "detail_rows": parsed.detail_rows,
         "domestic_rows": parsed.domestic_rows,
@@ -713,6 +746,7 @@ def _prepare_rakuten_import(parsed: RakutenCsvResult) -> tuple[dict[str, object]
         "encoding": parsed.encoding,
         "summary": summary,
         "positions": preview_items,
+        "missing_positions": missing_positions,
         "issues": [
             {
                 "row_number": issue.row_number,
@@ -748,7 +782,9 @@ async def preview_rakuten_positions(request: Request) -> dict[str, object]:
 
 
 @app.post("/api/v1/portfolio/imports/rakuten/apply")
-async def apply_rakuten_positions(request: Request) -> dict[str, object]:
+async def apply_rakuten_positions(
+    request: Request, holdings_as_of: date | None = None,
+) -> dict[str, object]:
     """プレビューと同じ規則で国内株式を冪等に登録・更新する。"""
     parsed = await _parse_rakuten_request(request)
     preview, records = _prepare_rakuten_import(parsed)
@@ -757,7 +793,20 @@ async def apply_rakuten_positions(request: Request) -> dict[str, object]:
             status_code=422,
             detail="登録できる国内株式がありません。銘柄マスタとCSVを確認してください",
         )
-    saved = bulk_upsert_positions(settings.database_url, records)
+    from stock_signal.position_journal import today
+
+    if holdings_as_of and holdings_as_of > today():
+        raise HTTPException(status_code=422, detail="保有基準日は未来日を指定できません")
+    saved = bulk_upsert_positions(
+        settings.database_url, records,
+        import_metadata={
+            "source": "rakuten_asset_balance",
+            "holdings_as_of": holdings_as_of.isoformat() if holdings_as_of else None,
+            "imported_positions": records,
+            "missing_positions": preview["missing_positions"],
+            "issues": preview["issues"],
+        },
+    )
     preview["status"] = "saved"
     preview["saved_symbols"] = saved
     preview["message"] = (

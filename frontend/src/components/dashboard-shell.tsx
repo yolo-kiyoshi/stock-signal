@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } 
 import type { FormEvent } from "react";
 
 import { ResearchPanel } from "@/components/research-panel";
+import { PositionJournal } from "@/components/position-journal";
 import { EntryDiagnosticsView, entryStrategyLabels } from "@/components/entry-diagnostics";
 import { PriceChart } from "@/components/price-chart";
 import type {
@@ -31,6 +32,7 @@ type ListFilters = {
   liquidity: string;
   freshness: string;
 };
+type ListSort = "symbol" | "capital_stock" | "employees" | "sales" | "market_cap";
 
 const defaultListFilters: ListFilters = {
   market: "all",
@@ -158,6 +160,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const [pagination, setPagination] = useState({ key: "", page: 0 });
   const [candidateAction, setCandidateAction] = useState<CandidateAction>("all");
   const [listFilters, setListFilters] = useState<ListFilters>(defaultListFilters);
+  const [listSort, setListSort] = useState<ListSort>("symbol");
   const [selected, setSelected] = useState<NavItem | null>(firstInstrument);
   const [chartRange, setChartRange] = useState<ChartRange>("6m");
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null);
@@ -179,6 +182,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const [positionCost, setPositionCost] = useState("");
   const rakutenFileInputRef = useRef<HTMLInputElement>(null);
   const [rakutenFile, setRakutenFile] = useState<File | null>(null);
+  const [rakutenAsOf, setRakutenAsOf] = useState("");
   const [rakutenPreview, setRakutenPreview] = useState<RakutenImportResponse | null>(null);
   const [rakutenLoading, setRakutenLoading] = useState(false);
   const [aiReview, setAiReview] = useState<AiReviewResponse | null>(null);
@@ -210,7 +214,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   }), [filterSource]);
   const filteredItems = useMemo(() => {
     const normalizedQuery = normalize(query);
-    return activeItems.filter((item) => {
+    const filtered = activeItems.filter((item) => {
       const searchTarget = normalize([
         item.symbol,
         item.display_name,
@@ -232,8 +236,18 @@ export function DashboardShell({ data }: { data: DashboardData }) {
       if (listFilters.earnings === "within30" && (item.days_to_earnings == null || item.days_to_earnings > 30)) return false;
       return true;
     });
-  }, [activeItems, listFilters, query]);
-  const pageKey = JSON.stringify([tab, candidateHorizon, candidateAction, query, listFilters]);
+    if (listSort === "symbol") return filtered.sort((left, right) => left.symbol.localeCompare(right.symbol, "ja"));
+    return filtered.sort((left, right) => {
+      const field = listSort as keyof Pick<NavItem, "capital_stock" | "employees" | "sales" | "market_cap">;
+      const leftValue = left[field] == null ? null : Number(left[field]);
+      const rightValue = right[field] == null ? null : Number(right[field]);
+      if (leftValue == null && rightValue == null) return left.symbol.localeCompare(right.symbol, "ja");
+      if (leftValue == null) return 1;
+      if (rightValue == null) return -1;
+      return rightValue - leftValue || left.symbol.localeCompare(right.symbol, "ja");
+    });
+  }, [activeItems, listFilters, query, listSort]);
+  const pageKey = JSON.stringify([tab, candidateHorizon, candidateAction, query, listFilters, listSort]);
   const pageCount = Math.max(1, Math.ceil(filteredItems.length / 100));
   const currentPage = pagination.key === pageKey ? Math.min(pagination.page, pageCount - 1) : 0;
   const visibleItems = filteredItems.slice(currentPage * 100, (currentPage + 1) * 100);
@@ -461,7 +475,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     setSidebarMessage(null);
     try {
       const result = await apiJson<RakutenImportResponse>(
-        "/api/v1/portfolio/imports/rakuten/apply",
+        `/api/v1/portfolio/imports/rakuten/apply${rakutenAsOf ? `?holdings_as_of=${encodeURIComponent(rakutenAsOf)}` : ""}`,
         { method: "POST", headers: { "Content-Type": "text/csv" }, body: rakutenFile },
       );
       setSidebarMessage(result.message ?? "保有銘柄を登録・更新しました");
@@ -611,6 +625,9 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                       required
                     />
                   </label>
+                  <label>CSVの保有基準日（不明なら空欄）
+                    <input type="date" value={rakutenAsOf} onChange={(event) => setRakutenAsOf(event.target.value)} />
+                  </label>
                   <button type="submit" disabled={!rakutenFile || rakutenLoading || mutating}>
                     {rakutenLoading && !rakutenPreview ? "確認中…" : "内容を確認"}
                   </button>
@@ -628,6 +645,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                         <div key={position.symbol} className={position.status === "ready" ? "" : "has-warning"}>
                           <span><strong>{position.symbol}</strong> {position.display_name}</span>
                           <small>{Number(position.quantity).toLocaleString("ja-JP")}株・{position.account_type}</small>
+                          {position.previous_quantity != null && <small>前回 {position.previous_quantity}株 → 今回 {position.quantity}株／平均取得価格 {position.previous_average_cost ?? "未登録"}円 → {position.average_cost ?? "未登録"}円</small>}
                           {position.status !== "ready" && <em>{position.message}</em>}
                         </div>
                       ))}
@@ -636,6 +654,11 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                       <p>{Object.entries(rakutenPreview.skipped_types).map(([name, count]) => `${name} ${count}件`).join("、")}は対象外です。</p>
                     )}
                     {rakutenPreview.summary.duplicate_rows > 0 && <p>同一コードの{rakutenPreview.summary.duplicate_rows}行を数量加重平均で統合します。</p>}
+                    {!!rakutenPreview.missing_positions?.length && <div className="decision-warning">
+                      <strong>今回のCSVに見当たらない保有</strong>
+                      <ul>{rakutenPreview.missing_positions.map((position) => <li key={`${position.provider}-${position.symbol}`}>{position.symbol} {position.display_name} · {position.quantity}株</li>)}</ul>
+                      <p>売却済みか、CSVの出力範囲外かを確認してください。保有は自動削除しません。売却済みの場合は保有一覧の削除ボタンで照合を完了できます。</p>
+                    </div>}
                     <button
                       type="button"
                       className="import-apply-button"
@@ -660,29 +683,33 @@ export function DashboardShell({ data }: { data: DashboardData }) {
           )}
           {tab === "candidates" && (
             <div className="candidate-controls">
-              <div className="candidate-heading">
-                <span>日足 {candidateItems[0]?.as_of_date ?? "未生成"}</span>
-                <button type="button" className="list-tool-button" disabled={refreshing}
-                  onClick={() => startRefresh(() => router.refresh())}>
-                  <span aria-hidden="true">↻</span> {refreshing ? "再読み込み中…" : "一覧を再読み込み"}
-                </button>
-              </div>
-              <p className="candidate-refresh-note" role="status">
-                {refreshing ? "保存済みの最新一覧を読み込んでいます" : "保存済みの分析結果を表示"}
-              </p>
-              <dl className="candidate-summary" aria-label="絞り込み前の候補件数">
-                <div><dt>テクニカル通過</dt><dd>{candidateItems.filter((item) => item.technical_action === "buy_candidate").length}<small>件</small></dd></div>
-                <div className="candidate-summary-buy"><dt>購入候補</dt><dd>{candidateItems.filter((item) => item.action === "buy_candidate").length}<small>件</small></dd></div>
-                {Object.entries({ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }).map(([status, label]) => <div key={status}><dt>{label}</dt><dd>{candidateItems.filter((item) => item.screening_status === status).length}<small>件</small></dd></div>)}
-                <div><dt>リスク保留</dt><dd>{candidateItems.filter((item) => item.screening_status === "risk_hold").length}<small>件</small></dd></div>
-              </dl>
-              {candidateItems.length > 0 && !candidateItems.some((item) => item.action === "buy_candidate") && (
-                <details className="candidate-refresh-note">
-                  <summary>購入候補0件の理由（{candidateItems.length}銘柄を分析済み）</summary>
-                  <p>表示日の条件を満たす銘柄がありません。過去日の候補は含めていません。</p>
-                  <ul>{candidateHoldReasons.map(([reason, count]) => <li key={reason}>{reason}：{count}件</li>)}</ul>
-                </details>
-              )}
+              <details className="candidate-overview">
+                <summary>保存済みの分析結果・集計 <span>日足 {candidateItems[0]?.as_of_date ?? "未生成"}</span></summary>
+                <div className="candidate-heading">
+                  <span>日足 {candidateItems[0]?.as_of_date ?? "未生成"}</span>
+                  <button type="button" className="list-tool-button" disabled={refreshing}
+                    onClick={() => startRefresh(() => router.refresh())}>
+                    <span aria-hidden="true">↻</span> {refreshing ? "再読み込み中…" : "一覧を再読み込み"}
+                  </button>
+                </div>
+                <p className="candidate-refresh-note" role="status">
+                  {refreshing ? "保存済みの最新一覧を読み込んでいます" : "保存済みの分析結果を表示"}
+                </p>
+                <dl className="candidate-summary" aria-label="絞り込み前の候補件数">
+                  <div><dt>テクニカル通過</dt><dd>{candidateItems.filter((item) => item.technical_action === "buy_candidate").length}<small>件</small></dd></div>
+                  <div className="candidate-summary-buy"><dt>購入候補</dt><dd>{candidateItems.filter((item) => item.action === "buy_candidate").length}<small>件</small></dd></div>
+                  {Object.entries({ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }).map(([status, label]) => <div key={status}><dt>{label}</dt><dd>{candidateItems.filter((item) => item.screening_status === status).length}<small>件</small></dd></div>)}
+                  <div><dt>リスク保留</dt><dd>{candidateItems.filter((item) => item.screening_status === "risk_hold").length}<small>件</small></dd></div>
+                </dl>
+                {candidateItems.length > 0 && !candidateItems.some((item) => item.action === "buy_candidate") && (
+                  <details className="candidate-refresh-note">
+                    <summary>購入候補0件の理由（{candidateItems.length}銘柄を分析済み）</summary>
+                    <p>表示日の条件を満たす銘柄がありません。過去日の候補は含めていません。</p>
+                    <ul>{candidateHoldReasons.map(([reason, count]) => <li key={reason}>{reason}：{count}件</li>)}</ul>
+                  </details>
+                )}
+              </details>
+              {candidateItems.some((item) => item.screening_status === "needs_reanalysis") && <p className="candidate-refresh-note">再分析待ちの銘柄は購入候補から除外しています。再分析が完了すると一覧に反映されます。</p>}
               <div className="candidate-horizon">
                 <span>候補の分析軸</span>
                 <div role="group" aria-label="分析候補の運用スタイル">
@@ -718,6 +745,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
             </details>
             <div className="list-results-toolbar">
               <span role="status">表示 <strong>{filteredItems.length}</strong> / {filterSource.length}件</span>
+              <label className="list-sort-control"><span>並び順</span><select value={listSort} onChange={(event) => setListSort(event.target.value as ListSort)}>
+                <option value="symbol">証券コード順</option>
+                <option value="capital_stock">資本金が大きい順</option>
+                <option value="employees">従業員数が多い順</option>
+                <option value="sales">売上高が大きい順</option>
+                <option value="market_cap">時価総額が大きい順</option>
+              </select></label>
               <button type="button" className="list-tool-button" disabled={!hasListConstraints}
                 onClick={clearListConstraints}>絞り込みを解除</button>
             </div>
@@ -735,12 +769,13 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               const watched = watchedSymbols.has(`${item.provider}:${item.symbol}`);
               return (
                 <div className="instrument-row" key={`${item.provider}-${item.symbol}`}>
-                  <button type="button" title={item.judgment_reason ?? undefined} className={selected?.symbol === item.symbol ? "instrument active" : "instrument"} onClick={() => selectNavigationItem(item)}>
+                  <button type="button" aria-current={selected?.symbol === item.symbol && selected?.provider === item.provider ? "true" : undefined} title={item.judgment_reason ?? undefined} className={selected?.symbol === item.symbol ? "instrument active" : "instrument"} onClick={() => selectNavigationItem(item)}>
                     <span className="instrument-copy">
                       <span className="instrument-symbol-line">
                         <strong>{item.symbol}</strong>
                       </span>
                       <span className="instrument-name">{item.display_name}</span>
+                      {tab !== "candidates" && (
                       <span className="instrument-tags">
                         {tab === "positions" && item.quantity && (
                           <em title={item.average_cost ? `平均取得単価 ${Number(item.average_cost).toLocaleString("ja-JP")}円` : "平均取得単価は未登録"}>
@@ -754,18 +789,27 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                         <em className={item.days_to_earnings != null && item.days_to_earnings <= 7 ? "tag-warning" : ""} title={item.next_earnings_date ? `次回決算予定 ${item.next_earnings_date}` : "取得できる将来の決算予定はありません"}>{earningsTag(item)}</em>
                         <em className={item.liquidity_rank === "low" ? "tag-caution" : ""} title={item.median_turnover ? `直近60日売買代金中央値 ${Number(item.median_turnover).toLocaleString("ja-JP")}円` : "直近の分析結果に基づく流動性区分"}>{liquidityLabels[item.liquidity_rank ?? "unknown"]}</em>
                         <em className={item.freshness_status === "fresh" ? "tag-fresh" : "tag-caution"} title={item.latest_trade_date ? `最新日足 ${item.latest_trade_date}` : "日足データがありません"}>{freshnessTag(item)}</em>
+                        {item.capital_stock != null && <em title="資本金">資本 {Number(item.capital_stock).toLocaleString("ja-JP")}</em>}
+                        {item.employees != null && <em title="従業員数">従業員 {item.employees.toLocaleString("ja-JP")}人</em>}
+                        {item.sales != null && <em title="売上高">売上 {Number(item.sales).toLocaleString("ja-JP")}</em>}
+                        {item.market_cap != null && <em title="時価総額">時価総額 {Number(item.market_cap).toLocaleString("ja-JP")}</em>}
                       </span>
-                      {tab === "candidates" && <>
-                        <span className="candidate-strategy">{item.entry_strategy ? entryStrategyLabels[item.entry_strategy] ?? "判定経路未確認" : "判定経路未算出"}</span>
-                        <EntryDiagnosticsView diagnostics={item.entry_diagnostics} asOfDate={item.as_of_date ?? "未生成"} />
-                      </>}
+                      )}
+                      {tab === "candidates" && (item.capital_stock != null || item.employees != null || item.sales != null || item.market_cap != null) && (
+                        <span className="instrument-tags">
+                          {item.capital_stock != null && <em title="資本金">資本 {Number(item.capital_stock).toLocaleString("ja-JP")}</em>}
+                          {item.employees != null && <em title="従業員数">従業員 {item.employees.toLocaleString("ja-JP")}人</em>}
+                          {item.sales != null && <em title="売上高">売上 {Number(item.sales).toLocaleString("ja-JP")}</em>}
+                          {item.market_cap != null && <em title="時価総額">時価総額 {Number(item.market_cap).toLocaleString("ja-JP")}</em>}
+                        </span>
+                      )}
                     </span>
                     <span className="instrument-status">
-                    {["data_pending", "metrics_missing", "review_required"].includes(item.screening_status ?? "") && <small className="pending-label">{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[item.screening_status as string]}</small>}
-                    {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
+                    {tab !== "candidates" && ["data_pending", "metrics_missing", "review_required"].includes(item.screening_status ?? "") && <small className="pending-label">{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[item.screening_status as string]}</small>}
+                    {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${item.screening_status === "needs_reanalysis" ? "再分析待ち" : entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
                     </span>
                   </button>
-                  {tab === "candidates" && <button type="button" className={`row-action${watched ? " is-added" : ""}`} aria-label={`${item.symbol}をウォッチへ追加`} title={watched ? "ウォッチ登録済み" : "ウォッチへ追加"} disabled={watched || mutating} onClick={() => addCandidateToWatchlist(item)}>{watched ? "✓" : "+"}</button>}
+                  <button type="button" className={`row-action${watched ? " is-added" : ""}`} aria-label={`${item.symbol}をウォッチへ追加`} title={watched ? "ウォッチ登録済み" : "ウォッチへ追加"} disabled={watched || mutating} onClick={() => addCandidateToWatchlist(item)}>{watched ? "✓" : "+"}</button>
                   {tab === "watchlist" && <button type="button" className="row-action destructive" aria-label={`${item.symbol}をウォッチから削除`} disabled={mutating} onClick={() => removeItem(item, "watchlist")}>×</button>}
                   {tab === "positions" && <button type="button" className="row-action destructive" aria-label={`${item.symbol}を保有から削除`} disabled={mutating} onClick={() => removeItem(item, "positions")}>×</button>}
                 </div>
@@ -828,6 +872,23 @@ export function DashboardShell({ data }: { data: DashboardData }) {
         <section className="instrument-header">
           <div className="instrument-identity">
             <span className="eyebrow">選択銘柄</span><h2>{selected ? `${selected.symbol} ${selected.display_name}` : "銘柄を選択してください"}</h2>
+            {selected && (
+              <span className="instrument-tags">
+                {selected.quantity && (
+                  <em title={selected.average_cost ? `平均取得単価 ${Number(selected.average_cost).toLocaleString("ja-JP")}円` : "平均取得単価は未登録"}>
+                    {selected.account_type ?? "口座未設定"}・{Number(selected.quantity).toLocaleString("ja-JP")}株
+                  </em>
+                )}
+                <em title="市場区分">{selected.market ?? "市場 未分類"}</em>
+                <em title="商品種別">{selected.instrument_type ? instrumentTypeLabels[selected.instrument_type] ?? selected.instrument_type : "種別 未分類"}</em>
+                <em title={`TOPIX-17分類 ${selected.sector_17_code ?? ""}`.trim()}>17: {selected.sector_17_name ?? "未分類"}</em>
+                <em title={`東証33業種 ${selected.sector_33_code ?? ""}`.trim()}>33: {selected.sector_33_name ?? "未分類"}</em>
+                <em className={selected.days_to_earnings != null && selected.days_to_earnings <= 7 ? "tag-warning" : ""} title={selected.next_earnings_date ? `次回決算予定 ${selected.next_earnings_date}` : "取得できる将来の決算予定はありません"}>{earningsTag(selected)}</em>
+                <em className={selected.liquidity_rank === "low" ? "tag-caution" : ""} title={selected.median_turnover ? `直近60日売買代金中央値 ${Number(selected.median_turnover).toLocaleString("ja-JP")}円` : "直近の分析結果に基づく流動性区分"}>{liquidityLabels[selected.liquidity_rank ?? "unknown"]}</em>
+                <em className={selected.freshness_status === "fresh" ? "tag-fresh" : "tag-caution"} title={selected.latest_trade_date ? `最新日足 ${selected.latest_trade_date}` : "日足データがありません"}>{freshnessTag(selected)}</em>
+              </span>
+            )}
+            {selected?.screening_status && ["data_pending", "metrics_missing", "review_required"].includes(selected.screening_status) && <p>{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[selected.screening_status]}</p>}
             {bars && <p>{bars.range.from}〜{bars.range.to}・{bars.source.is_adjusted ? "調整済み" : "未調整"}</p>}
           </div>
           <div className="latest-price"><span>最新終値</span><strong>{latestBar ? `${Number(latestBar.close).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}円` : "—"}</strong><small>{bars?.freshness.latest_trade_date ?? "データ未読込"}</small></div>
@@ -841,6 +902,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
           </div>
         </section>
 
+        {selected && tab === "positions" && <PositionJournal key={`${selected.provider}-${selected.symbol}-${data.positions.map((p) => `${p.symbol}:${p.quantity}:${p.average_cost}`).join(",")}`} symbol={selected.symbol} provider={selected.provider} />}
         {loading && <div className="loading-card">日足と分析結果を読み込んでいます…</div>}
         {error && <div className="error-card">{error}</div>}
         {!loading && !error && bars && analysis && (
@@ -862,19 +924,23 @@ export function DashboardShell({ data }: { data: DashboardData }) {
             <section className="decision-grid">
               <article className={`decision-card action-${decision?.action ?? "insufficient_data"}`}>
                 <span className="eyebrow">投資検討区分</span><strong>{decision ? actionLabels[decision.action] : "判定不能"}</strong><p>{decision?.summary ?? "投資検討区分を生成できませんでした"}</p><small>根拠の強さ {decision?.evidence_score.toFixed(1) ?? "—"}・確率ではありません</small>
+                {analysis.research?.financials.status === "caution" && <div className="decision-warning"><strong>財務注意</strong><ul>{analysis.research.financials.cautions.map((caution) => <li key={caution}>{caution}</li>)}</ul></div>}
+                {!analysis.equity_checks.some((check) => check.key === "days_to_earnings" && check.value != null) && <p className="decision-warning">決算予定未取得：分析期間内に決算がないことを確認できていません。</p>}
+                {analysis.equity_checks.filter((check) => check.key === "upper_resistance_confirmation").map((check) => <p className="decision-warning" key={check.key}>{check.description}</p>)}
                 {!!decision?.cautions.length && <ul className="compact-notes">{decision.cautions.slice(0, 3).map((caution) => <li key={caution}>{caution}</li>)}</ul>}
               </article>
               <article className={`entry-stage-card entry-${decision?.entry_stage ?? "not_applicable"}`}>
-                <span className="eyebrow">今の買い準備</span>
-                <strong>{decision?.entry_stage_label ?? "未評価"}</strong>
-                {decision?.entry_strategy && <small>{entryStrategyLabels[decision.entry_strategy] ?? "判定経路未確認"}</small>}
+                <span className="eyebrow">上抜け検出と購入条件</span>
+                <small>上抜け検出：{analysis.patterns.some((pattern) => pattern.direction === "up") ? "検出済み（有効性は下の条件を確認）" : "未検出"}</small>
+                <small>購入条件：{decision?.action === "buy_candidate" && decision.entry_stage === "entry_ready" ? "充足（分析ルール上）" : decision?.action === "watch" ? "確認待ち" : "未充足・判定対象外"}</small>
+                <strong>{analysis.equity_checks.some((check) => check.key === "upper_resistance_confirmation") && decision?.action === "watch" ? "上位抵抗帯の突破確認待ち" : decision?.entry_stage_label ?? "未評価"}</strong>
+                <small>{decision?.entry_strategy ? entryStrategyLabels[decision.entry_strategy] ?? "判定経路未確認" : "判定経路未算出"}</small>
                 <div className="execution-metrics">
                   <span>形の強さ <b>{decision?.setup_score?.toFixed(1) ?? "—"}</b></span>
-                  <span>買い条件 <b>{decision?.entry_score?.toFixed(1) ?? "—"}</b></span>
-                  <span>実行R/R <b>{decision?.execution_risk_reward_ratio?.toFixed(2) ?? "—"}</b></span>
+                  <span title="技術条件の参考スコアです。抵抗帯・財務・イベントなどの追加確認を含む購入条件の充足率ではありません。">技術条件スコア <b>{decision?.entry_score?.toFixed(1) ?? "—"}</b></span>
                 </div>
                 <small>上昇形状と「今買う条件」を別々に評価しています。</small>
-                <EntryDiagnosticsView diagnostics={analysis.entry_diagnostics} asOfDate={analysis.as_of_date} />
+                <EntryDiagnosticsView diagnostics={analysis.entry_diagnostics} asOfDate={analysis.as_of_date} targetRiskReward={decision?.execution_risk_reward_ratio} targetPrice={decision?.expected_target_price} />
               </article>
               <article className={`direction-card direction-${analysis.direction}`}>
                 <span className="eyebrow">現在のテクニカル方向</span><strong>{directionLabels[analysis.direction]}</strong><div className="score-row">{(["up", "flat", "down"] as const).map((direction) => <span key={direction}>{directionLabels[direction]} {analysis.scores[direction].toFixed(1)}</span>)}</div><small>価格の向きであり、投資検討区分とは異なります・{analysis.as_of_date}</small>

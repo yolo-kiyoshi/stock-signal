@@ -43,6 +43,11 @@ def normalize_summary(record: dict) -> dict:
         "NxFOP",
         "ROE",
         "ShEq",
+        "Cap",
+        "NumOfEmployees",
+        "ShOutFY",
+        "MarketCap",
+        "MktCap",
         "RetroRst",
         "SigChgInC",
     )
