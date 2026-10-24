@@ -286,6 +286,10 @@ def _serialize_analysis(result, display_name: str | None = None) -> dict[str, ob
         }
 
     return {
+        "market_gate_diagnostic": (
+            asdict(result.market_gate_diagnostic)
+            if result.market_gate_diagnostic is not None else None
+        ),
         "research": result.research,
         "entry_diagnostics": (
             asdict(result.entry_diagnostics) if result.entry_diagnostics is not None else None

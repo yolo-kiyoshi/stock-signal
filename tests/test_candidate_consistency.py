@@ -1,11 +1,12 @@
 """旧判定が購入候補に残らないことと、保存データからの再分析を検証する。"""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import insert, update
 from test_analysis import make_bars, make_rectangle_breakout
+from test_swing_market_gate import falling_market
 
 from stock_signal.analysis.service import AnalysisService
 from stock_signal.batch import DailyBatchRunner
@@ -36,6 +37,10 @@ def seed_snapshots(database_url, horizon):
              "evidence_score": 100 - index, "analysis_json": {
                  "engine_version": version, "research_stale": stale,
                  "entry_stage": "entry_ready", "summary": "購入条件充足",
+                 "market_gate_diagnostic": {
+                     "status": "market_only", "market_trend_score": -15,
+                     "other_conditions_summary": "技術条件充足",
+                 },
                  "research": {"technical_action": "buy_candidate", "screening_status": "candidate"},
              }}
             for index, (symbol, version, stale) in enumerate(variants)
@@ -51,6 +56,7 @@ def test_old_candidates_excluded_before_filter_and_pagination(database_url, hori
     assert all(item["entry_stage"] == "not_applicable" for item in stale)
     assert all(item["screening_status"] == "needs_reanalysis" for item in stale)
     assert all(item["technical_action"] is None for item in stale)
+    assert all(item["market_gate_diagnostic"] is None for item in stale)
     assert all("再分析待ち" in item["judgment_reason"] for item in stale)
     first = list_market_candidates(database_url, horizon_days=horizon,
                                    action="buy_candidate", limit=1)
@@ -67,6 +73,7 @@ def test_reanalysis_uses_saved_data_and_matches_detail(database_url):
     bars = [replace(bar, symbol="3397", provider="jquants", is_adjusted=True)
             for bar in make_rectangle_breakout(direction=Direction.UP)]
     upsert_daily_bars(database_url, bars)
+    upsert_daily_bars(database_url, list(falling_market(bars).market_bars))
 
     def forbidden_provider(name):
         raise AssertionError("再分析時に外部プロバイダーを生成してはいけません")
@@ -85,8 +92,14 @@ def test_reanalysis_uses_saved_data_and_matches_detail(database_url):
         assert saved["action"] == detail.investment_decision.action.value
         assert saved["entry_stage"] == detail.investment_decision.entry_stage.value
         assert saved["judgment_reason"] == detail.investment_decision.summary
+        assert saved["market_gate_diagnostic"] == (
+            asdict(detail.market_gate_diagnostic) if detail.market_gate_diagnostic else None
+        )
         assert saved["engine_version"] == ANALYSIS_ENGINE_VERSION
         assert saved["screening_status"] != "needs_reanalysis"
+        if horizon == 5:
+            assert saved["market_gate_diagnostic"]["status"] == "market_only"
+            assert saved["action"] == "watch"
 
 
 def test_new_daily_bar_invalidates_current_version_buy_before_filter(database_url):

@@ -277,6 +277,38 @@ Wilder ATRに対してスイングは
 ±0.5 ATR、中長期は±1.0 ATR以上を上昇・下落、その内側を停滞と分類します。レポートの
 「方向一致率」は3分類の当てはまりであり、売買戦略の勝率、利益率、将来確率ではありません。
 
+### 固定条件の時系列評価
+
+`strategy-study`は対象銘柄・期間・エンジン版・片道コストをJSONで指定し、
+ブレイク追随・押し目反発を経路別に集計します。[評価仕様と限界](docs/strategy-study.md)を参照してください。
+以下は入力形式の例であり、未使用の評価期間や検証済みの銘柄群を示すものではありません。
+`reports/private/study-plan.json`に保存し、選定理由と確認済みの期間を実際の内容へ置き換えてください。
+
+```json
+{
+  "symbols": ["7203", "6758"],
+  "provider": "jquants",
+  "horizons": [5, 20],
+  "windows": [
+    {"name": "前半", "start": "2025-01-01", "end": "2025-06-30"},
+    {"name": "後半", "start": "2025-07-01", "end": "2025-12-31"}
+  ],
+  "cost_bps": 10,
+  "engine_version": "2.17.0",
+  "selection_notes": "入力例。銘柄・期間の選定理由と、結果を既に確認した範囲を記載する"
+}
+```
+
+```bash
+docker compose run --rm app stock-signal strategy-study \
+  --plan /app/reports/private/study-plan.json \
+  --output /app/reports/private/strategy-study.json
+```
+
+市場データを取得せず、保存日足だけを読み取ります。結果ファイルは上書きできません。
+期間終端を超える実績と欠損指標は集計から除き、除外状態・件数を結果に記録します。
+正式なウォークフォワード学習や収益改善の証明ではありません。
+
 ## Alpha Vantage APIキー
 
 1. `https://www.alphavantage.co/support/#api-key`で無料キーを取得する。

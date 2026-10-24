@@ -14,6 +14,7 @@ TOMOSHIBIYORIの機能仕様、理論的背景、未解決・残課題をまと�
 | [スイング押し目反発と価格位置](swing-pullback-and-diagnostics.md) | 押し目条件、抵抗帯、価格診断、候補一覧と詳細の整合性 |
 | [財務・保有リスク](light-research-design.md) | 財務の時点と欠損、会社予想、株数上限、集中度 |
 | [投資ストーリーとチャット分析](position-journal.md) | 保有CSV差分、履歴、資料生成、レビューの入力・保存契約 |
+| [固定条件の時系列評価](strategy-study.md) | 銘柄・期間・コストの固定、経路別集計、期間境界と不足データの扱い |
 | [RSIダイバージェンス検証](rsi-divergence-study.md) | 研究用検出器と条件追加の比較仕様。通常の購入判定には未接続 |
 | [反転監視検証](divergence-watch-study.md) | 研究用状態遷移と損益計算。通常の購入判定には未接続 |
 

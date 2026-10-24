@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import replace
 
 from stock_signal.analysis.base import (
     AnalysisRule,
@@ -29,6 +30,7 @@ from stock_signal.domain.analysis import (
     Direction,
     InvestmentAction,
     InvestmentDecision,
+    MarketGateDiagnostic,
     PatternDetection,
     PatternLifecycleAssessment,
     PatternLifecycleStatus,
@@ -186,6 +188,32 @@ class RuleBasedAnalysisEngine:
         decision, resistance_checks = apply_breakout_resistance_gate(
             decision, ordered, horizon_days,
         )
+        market_gate_diagnostic = None
+        market = next((check for check in checks if check.key == "market_trend_score"), None)
+        if (
+            decision.action is InvestmentAction.WATCH
+            and market is not None
+            and market.value is not None
+            and market.value < -10
+        ):
+            # 診断用コピーで市場ゲートだけを除外する。相対力・現在足・抵抗帯などは維持する。
+            diagnostic_checks = tuple(
+                replace(check, value=None) if check.key == "market_trend_score" else check
+                for check in checks
+            )
+            alternative = self.decision_policy.decide(
+                direction, scores, patterns, pattern_lifecycles, transition_readiness,
+                position_entry, diagnostic_checks, horizon_days, swing_pullback=swing_pullback,
+            )
+            alternative, _ = apply_breakout_resistance_gate(alternative, ordered, horizon_days)
+            market_gate_diagnostic = MarketGateDiagnostic(
+                status=(
+                    "market_only" if alternative.action is InvestmentAction.BUY_CANDIDATE
+                    else "other_conditions_pending"
+                ),
+                market_trend_score=market.value,
+                other_conditions_summary=alternative.summary,
+            )
         checks += resistance_checks
         return AnalysisResult(
             symbol=symbol.upper(),
@@ -203,6 +231,7 @@ class RuleBasedAnalysisEngine:
             equity_checks=checks,
             investment_decision=decision,
             swing_pullback=swing_pullback,
+            market_gate_diagnostic=market_gate_diagnostic,
             entry_diagnostics=calculate_entry_diagnostics(
                 ordered, decision.execution_stop_price, horizon_days=horizon_days,
             ),

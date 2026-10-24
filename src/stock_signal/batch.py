@@ -399,6 +399,10 @@ class DailyBatchRunner:
                             action=decision.action.value,
                             evidence_score=decision.evidence_score,
                             analysis_json={
+                                "market_gate_diagnostic": (
+                                    asdict(result.market_gate_diagnostic)
+                                    if result.market_gate_diagnostic is not None else None
+                                ),
                                 "entry_strategy": decision.entry_strategy,
                                 "entry_diagnostics": (
                                     asdict(result.entry_diagnostics)

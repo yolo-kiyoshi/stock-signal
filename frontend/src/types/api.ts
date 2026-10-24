@@ -83,7 +83,14 @@ export type EntryDiagnostics = {
   resistance_risk_reward_ratio: number | null;
 };
 
+export type MarketGateDiagnostic = {
+  status: "market_only" | "other_conditions_pending";
+  market_trend_score: number;
+  other_conditions_summary: string;
+};
+
 export type MarketCandidate = InstrumentListItem & {
+  market_gate_diagnostic?: MarketGateDiagnostic | null;
   entry_strategy?: string | null;
   entry_diagnostics?: EntryDiagnostics | null;
   engine_version?: string | null;
@@ -243,6 +250,7 @@ export type EquityCheck = {
 };
 
 export type AnalysisResponse = {
+  market_gate_diagnostic?: MarketGateDiagnostic | null;
   entry_diagnostics?: EntryDiagnostics | null;
   swing_pullback?: AnalysisStage | null;
   research?: ResearchAssessment | null;

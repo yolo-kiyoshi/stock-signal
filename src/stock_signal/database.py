@@ -1371,6 +1371,10 @@ def list_market_candidates(
                 "entry_score": analysis_data.get("entry_score"),
                 "entry_strategy": analysis_data.get("entry_strategy"),
                 "entry_diagnostics": analysis_data.get("entry_diagnostics"),
+                "market_gate_diagnostic": (
+                    None if row["needs_reanalysis"]
+                    else analysis_data.get("market_gate_diagnostic")
+                ),
                 "engine_version": analysis_data.get("engine_version"),
                 "execution_risk_reward_ratio": analysis_data.get("execution_risk_reward_ratio"),
                 "market": row["market"],

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from stock_signal.domain.market_data import DailyBar
 
 
-ANALYSIS_ENGINE_VERSION = "2.16.0"
+ANALYSIS_ENGINE_VERSION = "2.17.0"
 
 
 class Direction(StrEnum):
@@ -299,6 +299,15 @@ class EntryDiagnostics:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketGateDiagnostic:
+    """TOPIX下落条件だけを除いた技術判定。実際の購入判定とは独立する。"""
+
+    status: str
+    market_trend_score: float
+    other_conditions_summary: str
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisContext:
     """市場・イベントなど個別株以外の分析入力。"""
 
@@ -343,6 +352,7 @@ class AnalysisResult:
     research: dict | None = None
     swing_pullback: PositionEntryAssessment | None = None
     entry_diagnostics: EntryDiagnostics | None = None
+    market_gate_diagnostic: MarketGateDiagnostic | None = None
 
     @property
     def winning_score(self) -> float:

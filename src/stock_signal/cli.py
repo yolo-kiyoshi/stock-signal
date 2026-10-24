@@ -123,6 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
     chart_parser.add_argument("symbol", help="保存済みの取得元固有銘柄記号")
     chart_parser.add_argument("--output-dir", type=Path, default=Path("reports"))
 
+    study_parser = subparsers.add_parser(
+        "strategy-study", help="固定条件で判定経路別の時系列評価をJSONへ出力する"
+    )
+    study_parser.add_argument("--plan", type=Path, required=True, help="検証条件のJSON")
+    study_parser.add_argument("--output", type=Path, required=True, help="新規の結果JSON")
+
     historical_report_parser = subparsers.add_parser(
         "historical-report",
         help="スイング・中長期の過去当てはめ実績HTMLを生成する",
@@ -429,6 +435,24 @@ def _run_command(args: argparse.Namespace, settings: Settings) -> int:
         )
         output_path = render_candlestick_report(bars, args.output_dir)
         print(f"ローソク足レポートを生成しました: {output_path}")
+        return 0
+
+    if args.command == "strategy-study":
+        from stock_signal.analysis.strategy_study import (
+            StrategyStudyService,
+            StudyPlan,
+            write_study_report,
+        )
+
+        if args.output.exists():
+            raise ValueError("出力先には既に結果があります。別のファイル名を指定してください")
+        try:
+            plan = StudyPlan.from_dict(json.loads(args.plan.read_text(encoding="utf-8")))
+        except OSError as error:
+            raise ValueError("検証設定ファイルを読み込めません") from error
+        report = StrategyStudyService(settings.database_url).run(plan)
+        write_study_report(report, args.output)
+        print(f"固定条件の時系列評価を保存しました: {args.output}")
         return 0
 
     if args.command == "historical-report":

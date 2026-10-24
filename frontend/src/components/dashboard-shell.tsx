@@ -20,7 +20,7 @@ import type {
 } from "@/types/api";
 
 type Tab = "positions" | "watchlist" | "candidates";
-type CandidateAction = "all" | MarketCandidate["action"];
+type CandidateAction = "all" | "market_only" | MarketCandidate["action"];
 type ChartRange = "1m" | "3m" | "6m" | "1y" | "all";
 type NavItem = InstrumentListItem & Partial<MarketCandidate> & Partial<PositionItem>;
 type ListFilters = {
@@ -199,7 +199,9 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   }, {})).sort((left, right) => right[1] - left[1]).slice(0, 3);
   const actionFilteredCandidates = candidateAction === "all"
     ? candidateItems
-    : candidateItems.filter((item) => item.action === candidateAction);
+    : candidateItems.filter((item) => candidateAction === "market_only"
+      ? item.market_gate_diagnostic?.status === "market_only"
+      : item.action === candidateAction);
   const activeItems: NavItem[] = tab === "positions"
     ? data.positions
     : tab === "watchlist"
@@ -360,7 +362,9 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     const nextCandidates = data.candidates[String(nextHorizon) as "5" | "20"];
     const filteredCandidates = candidateAction === "all"
       ? nextCandidates
-      : nextCandidates.filter((item) => item.action === candidateAction);
+      : nextCandidates.filter((item) => candidateAction === "market_only"
+        ? item.market_gate_diagnostic?.status === "market_only"
+        : item.action === candidateAction);
     const sameInstrument = filteredCandidates.find(
       (item) => item.symbol === selected?.symbol && item.provider === selected.provider,
     );
@@ -717,9 +721,10 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                   <button type="button" aria-pressed={candidateHorizon === 20} onClick={() => switchCandidateHorizon(20)}>中長期</button>
                 </div>
               </div>
+              <p className="candidate-refresh-note">TOPIX下落条件だけを除くと技術条件を満たす銘柄：{candidateItems.filter((item) => item.market_gate_diagnostic?.status === "market_only").length}件。購入候補ではありません。財務・資金・外部環境は別途確認が必要です。</p>
               <div className="candidate-filters" role="group" aria-label="投資検討区分">
-                {(["all", "buy_candidate", "watch", "avoid_new_buy"] as const).map((action) => (
-                  <button type="button" key={action} aria-pressed={candidateAction === action} onClick={() => setCandidateAction(action)}>{action === "all" ? "すべて" : actionLabels[action]}</button>
+                {(["all", "buy_candidate", "watch", "avoid_new_buy", "market_only"] as const).map((action) => (
+                  <button type="button" key={action} aria-pressed={candidateAction === action} onClick={() => setCandidateAction(action)}>{action === "all" ? "すべて" : action === "market_only" ? "技術条件：TOPIXのみ保留" : actionLabels[action]}</button>
                 ))}
               </div>
             </div>
@@ -806,6 +811,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                     </span>
                     <span className="instrument-status">
                     {tab !== "candidates" && ["data_pending", "metrics_missing", "review_required"].includes(item.screening_status ?? "") && <small className="pending-label">{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[item.screening_status as string]}</small>}
+                    {item.market_gate_diagnostic?.status === "market_only" && <small>技術条件：TOPIXのみ保留</small>}
                     {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${item.screening_status === "needs_reanalysis" ? "再分析待ち" : entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
                     </span>
                   </button>
@@ -935,6 +941,11 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 <small>購入条件：{decision?.action === "buy_candidate" && decision.entry_stage === "entry_ready" ? "充足（分析ルール上）" : decision?.action === "watch" ? "確認待ち" : "未充足・判定対象外"}</small>
                 <strong>{analysis.equity_checks.some((check) => check.key === "upper_resistance_confirmation") && decision?.action === "watch" ? "上位抵抗帯の突破確認待ち" : decision?.entry_stage_label ?? "未評価"}</strong>
                 <small>{decision?.entry_strategy ? entryStrategyLabels[decision.entry_strategy] ?? "判定経路未確認" : "判定経路未算出"}</small>
+                {analysis.market_gate_diagnostic && <div className="candidate-refresh-note">
+                  <strong>{analysis.market_gate_diagnostic.status === "market_only" ? "技術条件：TOPIXのみ保留" : "TOPIX以外の条件も未充足"}</strong>
+                  <p>TOPIXトレンド：{analysis.market_gate_diagnostic.market_trend_score.toFixed(1)}点。{analysis.market_gate_diagnostic.other_conditions_summary}</p>
+                  <small>TOPIX下落条件だけを除いた技術診断です。実際の購入判定は維持し、財務・資金・外部環境は別途確認します。</small>
+                </div>}
                 <div className="execution-metrics">
                   <span>形の強さ <b>{decision?.setup_score?.toFixed(1) ?? "—"}</b></span>
                   <span title="技術条件の参考スコアです。抵抗帯・財務・イベントなどの追加確認を含む購入条件の充足率ではありません。">技術条件スコア <b>{decision?.entry_score?.toFixed(1) ?? "—"}</b></span>
