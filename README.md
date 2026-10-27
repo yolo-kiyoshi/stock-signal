@@ -294,7 +294,7 @@ Wilder ATRに対してスイングは
     {"name": "後半", "start": "2025-07-01", "end": "2025-12-31"}
   ],
   "cost_bps": 10,
-  "engine_version": "2.17.0",
+  "engine_version": "2.18.0",
   "selection_notes": "入力例。銘柄・期間の選定理由と、結果を既に確認した範囲を記載する"
 }
 ```

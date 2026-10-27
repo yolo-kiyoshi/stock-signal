@@ -223,7 +223,12 @@ def test_position_style_distinguishes_pullback_from_chasing_uptrend() -> None:
     assert result.investment_decision is not None
     assert result.investment_decision.action is InvestmentAction.WATCH
     assert result.investment_decision.entry_stage.value == "conditional_entry"
-    assert result.position_entry.risk_reward_ratio == 1.32
+    assessment = result.position_entry
+    assert assessment.risk_reward_ratio == (
+        (assessment.target_price - assessment.current_price)
+        / (assessment.current_price - assessment.invalidation_price)
+    )
+    assert round(assessment.risk_reward_ratio, 2) == 1.32
 
 
 def test_position_style_waits_when_support_touch_has_no_rebound() -> None:

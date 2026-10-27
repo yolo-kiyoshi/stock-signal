@@ -19,7 +19,7 @@ def nearest_resistance(
     if any(band.lower <= current <= band.upper for band in bands):
         return "within_band", current
     levels = [band.lower for band in bands if band.lower > current]
-    for window in (20, lookback):
+    for window in sorted({20, min(60, lookback), lookback}):
         if len(bars) > window:
             high = max(float(bar.high) for bar in bars[-window - 1:-1])
             if high > current:

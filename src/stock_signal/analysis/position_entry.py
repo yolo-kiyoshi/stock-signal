@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from statistics import fmean, median
 
+from stock_signal.analysis.entry_diagnostics import nearest_resistance
 from stock_signal.analysis.indicators import (
-    resistance_bands,
     simple_moving_average_series,
     wilder_atr,
 )
@@ -229,12 +229,14 @@ class PositionEntryEvaluator:
                 0.01,
                 held_touches[0].lower - self.invalidation_buffer_atr * atr,
             )
-        target = self._target_price(ordered, current, atr)
+        # 診断表示と同じ抵抗を採用し、より近い過去高値を飛ばさない。
+        _, target = nearest_resistance(ordered, lookback=120)
+        invalidation = round(invalidation, 4) if invalidation is not None else None
         risk_reward = None
         if invalidation is not None and target is not None:
             downside = current - invalidation
             upside = target - current
-            if downside > 0 and upside > 0:
+            if downside > 0 and upside >= 0:
                 risk_reward = upside / downside
         return PositionEntryAssessment(
             phase=phase,
@@ -249,7 +251,8 @@ class PositionEntryEvaluator:
             atr=round(atr, 4),
             invalidation_price=(round(invalidation, 4) if invalidation is not None else None),
             target_price=round(target, 4) if target is not None else None,
-            risk_reward_ratio=(round(risk_reward, 2) if risk_reward is not None else None),
+            # 閾値判定前の丸めで1.5未満を購入候補に繰り上げない。
+            risk_reward_ratio=risk_reward,
             volume_ratio=(round(volume_ratio, 2) if volume_ratio is not None else None),
             support_touch_age_days=(
                 min(
@@ -309,31 +312,6 @@ class PositionEntryEvaluator:
                 )
             ),
             touch_age_days=touch_age,
-        )
-
-    @staticmethod
-    def _target_price(
-        bars: Sequence[DailyBar],
-        current: float,
-        atr: float,
-    ) -> float | None:
-        """上値抵抗帯、なければ過去高値から保守的な参考目標を選ぶ。"""
-        bands = resistance_bands(bars, lookback=120)
-        if any(band.lower <= current <= band.upper for band in bands):
-            return None
-        above = [band.lower for band in bands if band.lower > current + 0.1 * atr]
-        if above:
-            return min(above)
-        prior_highs = sorted(
-            {
-                max(float(bar.high) for bar in bars[-window - 1 : -1])
-                for window in (20, 60, 120)
-                if len(bars) > window
-            }
-        )
-        return next(
-            (price for price in prior_highs if price > current + 0.1 * atr),
-            None,
         )
 
     def _former_resistance_support(
