@@ -410,7 +410,7 @@ def test_future_bps_is_not_available_for_review():
     [
         ({"BPS": ""}, "review_required"),
         ({"FEPS": ""}, "metrics_missing"),
-        ({"SigChgInC": "true", "OP": "-10"}, "risk_hold"),
+        ({"SigChgInC": "true", "OP": "-10"}, "financial_caution"),
     ],
 )
 def test_financial_screening_reason_and_risk_priority(database_url, monkeypatch, changes, expected):

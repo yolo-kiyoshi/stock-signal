@@ -458,3 +458,17 @@ def test_support_bands_api_uses_only_selected_end_date(monkeypatch):
     assert len(bands) == 1
     assert bands[0]['center'] == 90
     assert bands[0]['touches'] == 3
+
+
+def test_candidate_universe_includes_unassessed_instruments(database_url) -> None:
+    replace_instruments(
+        database_url, "jquants",
+        [_instrument("6758", "ソニーグループ"), _instrument("7203", "トヨタ自動車")],
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/v1/candidate-universe")
+    assert response.status_code == 200
+    payload = response.json()
+    assert {item["symbol"] for item in payload["items"]} == {"6758", "7203"}
+    assert payload["saved_at"] == {}
+    assert all("action" not in item for item in payload["items"])

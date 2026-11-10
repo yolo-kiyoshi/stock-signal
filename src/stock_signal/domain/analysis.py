@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from stock_signal.domain.market_data import DailyBar
 
 
-ANALYSIS_ENGINE_VERSION = "2.18.0"
+ANALYSIS_ENGINE_VERSION = "2.20.0"
 
 
 class Direction(StrEnum):

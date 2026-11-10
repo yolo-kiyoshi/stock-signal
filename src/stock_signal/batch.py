@@ -329,7 +329,7 @@ class DailyBatchRunner:
         *,
         sync_financials: bool = True,
     ) -> BatchItemResult:
-        """流動性上位の全市場銘柄をスイング・中長期基準で分析して保存する。"""
+        """流動性上位の全市場銘柄をスイング・中期押し目基準で分析して保存する。"""
         try:
             universe = list_analysis_universe(
                 self.settings.database_url,

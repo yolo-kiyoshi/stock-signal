@@ -90,6 +90,9 @@ logs: doctor
 update: build-python
 	@printf '%s\n' '日足・財務・市場候補を更新します。API制限と取得範囲により時間がかかります。'
 	@$(COMPOSE) run --rm batch
+	@if [ "$$($(COMPOSE) ps --status running --services api)" = "api" ]; then \
+	  $(COMPOSE) restart api; \
+	fi
 	@printf '%s\n' 'データ更新が完了しました。開いている画面を再読み込みしてください。'
 
 validate-symbols:

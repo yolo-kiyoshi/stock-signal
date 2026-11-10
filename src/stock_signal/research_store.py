@@ -10,12 +10,40 @@ from stock_signal.persistence.engine import get_engine
 from stock_signal.persistence.schema import financial_disclosures, portfolio_risk_settings
 
 
+def load_bps_review(database_url: str, symbol: str) -> dict | None:
+    """直近の確認・取消を返す。過去の確認へは巻き戻さない。"""
+    from stock_signal.persistence.schema import bps_reviews
+
+    with get_engine(database_url).connect() as connection:
+        return connection.scalar(select(bps_reviews.c.payload).where(
+            bps_reviews.c.symbol == symbol, bps_reviews.c.provider == "jquants",
+        ).order_by(bps_reviews.c.id.desc()).limit(1))
+
+
+def save_bps_review(database_url: str, symbol: str, payload: dict) -> None:
+    """確認根拠を追記し、この銘柄の保存済み判定を再分析待ちにする。"""
+    from sqlalchemy import update
+
+    from stock_signal.persistence.schema import analysis_snapshots, bps_reviews
+
+    with get_engine(database_url).begin() as connection:
+        connection.execute(insert(bps_reviews).values(
+            symbol=symbol, provider="jquants", payload=payload,
+        ))
+        connection.execute(update(analysis_snapshots).where(
+            analysis_snapshots.c.symbol == symbol,
+            analysis_snapshots.c.provider == "jquants",
+        ).values(analysis_json=analysis_snapshots.c.analysis_json.op("||")(
+            {"research_stale": True},
+        )))
+
+
 def save_disclosures(database_url: str, records: list[dict]) -> int:
     """開示番号別に追記し、後日取得した内容で過去の記録を上書きしない。"""
     records = [normalize_summary(r) for r in records]
     with get_engine(database_url).begin() as connection:
         for r in records:
-            connection.execute(
+            inserted = connection.execute(
                 insert(financial_disclosures)
                 .values(
                     symbol=r["Code"],
@@ -26,6 +54,17 @@ def save_disclosures(database_url: str, records: list[dict]) -> int:
                 )
                 .on_conflict_do_nothing()
             )
+            if inserted.rowcount:
+                from sqlalchemy import update
+
+                from stock_signal.persistence.schema import analysis_snapshots
+
+                connection.execute(update(analysis_snapshots).where(
+                    analysis_snapshots.c.symbol == r["Code"],
+                    analysis_snapshots.c.provider == "jquants",
+                ).values(analysis_json=analysis_snapshots.c.analysis_json.op("||")(
+                    {"research_stale": True},
+                )))
     return len(records)
 
 

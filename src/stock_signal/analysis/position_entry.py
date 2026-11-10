@@ -32,10 +32,10 @@ class PositionEntryEvaluator:
     def evaluate(self, bars: Sequence[DailyBar]) -> PositionEntryAssessment:
         ordered = tuple(sorted(bars, key=lambda bar: bar.trade_date))
         if len(ordered) < 70:
-            raise ValueError("中長期の押し目評価には70営業日以上の日足が必要です")
+            raise ValueError("中期押し目評価には70営業日以上の日足が必要です")
         atr = wilder_atr(ordered, 20)
         if atr is None or atr <= 0:
-            raise ValueError("中長期の押し目評価に必要なATRを計算できません")
+            raise ValueError("中期押し目評価に必要なATRを計算できません")
 
         closes = [float(bar.close) for bar in ordered]
         latest = ordered[-1]
@@ -45,7 +45,7 @@ class PositionEntryEvaluator:
         ma60 = ma60_series[-1]
         ma60_previous = ma60_series[-6]
         if ma20 is None or ma60 is None or ma60_previous is None:
-            raise ValueError("中長期の押し目評価に必要な移動平均を計算できません")
+            raise ValueError("中期押し目評価に必要な移動平均を計算できません")
 
         average_order = ma20 >= ma60
         long_average_rising = ma60 > ma60_previous

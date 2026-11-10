@@ -20,7 +20,7 @@ _ACTION_LABELS = {
     "avoid_new_buy": "新規購入回避",
     "insufficient_data": "データ不足",
 }
-_HORIZON_LABELS = {5: "スイング", 20: "中長期"}
+_HORIZON_LABELS = {5: "スイング", 20: "中期押し目"}
 
 
 def _safe_filename(value: str) -> str:
@@ -137,7 +137,7 @@ def render_historical_fit_report(
     *,
     display_name: str | None = None,
 ) -> Path:
-    """スイング・中長期の過去当てはめ実績を単独HTMLへ出力する。"""
+    """スイング・中期押し目の過去当てはめ実績を単独HTMLへ出力する。"""
     if not points:
         raise ValueError("過去当てはめ実績を出力できる判定日がありません")
     ordered = sorted(points, key=lambda point: point.as_of_date)
@@ -255,9 +255,9 @@ def render_historical_fit_report(
     <h2>読み方</h2>
     <p>現在のエンジン版を各判定日へ遡及適用し、その日以前の日足だけでテクニカル方向を
       再計算しています。約定価格は判定の翌営業日始値とし、スイングは5営業日後、
-      中長期は20営業日後の終値と比較します。連続する購入候補は初日を一つの購入イベントとして集計します。
+      中期押し目は20営業日後の終値と比較します。連続する購入候補は初日を一つの購入イベントとして集計します。
       実績方向は判定日時点のWilder ATRを使い、
-      スイングは±0.5 ATR、中長期は±1.0 ATR以上を上昇・下落、その内側を停滞とします。
+      スイングは±0.5 ATR、中期押し目は±1.0 ATR以上を上昇・下落、その内側を停滞とします。
       MFEは期間中の最大上昇、MAEは最大逆行です。同一日に目標と損切りの双方へ触れた場合は、
       保守的に損切りが先と扱います。一致率は方向3分類の当てはまりであり、
       売買戦略の勝率、利益率、将来確率ではありません。</p>
@@ -269,7 +269,7 @@ def render_historical_fit_report(
         <caption>実績が未確定または履歴不足の判定日 {skipped}件を詳細表から除外</caption>
         <thead>
           <tr><th rowspan="2">判定日</th><th colspan="4">スイング・5営業日後</th>
-            <th colspan="4">中長期・20営業日後</th></tr>
+            <th colspan="4">中期押し目・20営業日後</th></tr>
           <tr><th>当時の判定</th><th>実績</th><th>照合</th><th>騰落率</th>
             <th>当時の判定</th><th>実績</th><th>照合</th><th>騰落率</th></tr>
         </thead>

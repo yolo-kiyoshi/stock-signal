@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import type { ResearchAssessment } from "@/types/api";
+import { BpsReference } from "@/components/bps-reference";
 
 const labels: Record<string, string> = {
   total_capital: "運用総資産（保有評価額＋現金・円）", cash_balance: "現金残高（円）",
@@ -24,7 +25,7 @@ const statusLabels: Record<string, string> = {
   data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要",
 };
 
-export function ResearchPanel({ research }: { research?: ResearchAssessment | null }) {
+export function ResearchPanel({ research, symbol }: { research?: ResearchAssessment | null; symbol: string }) {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -57,6 +58,7 @@ export function ResearchPanel({ research }: { research?: ResearchAssessment | nu
       <article className="detail-card">
         <h4>企業品質・業績・評価倍率：{statusLabels[finance?.status ?? "missing"]}</h4>
         <p>採用した決算開示日：{finance?.disclosed_date ?? "未取得"}／分析日：{finance?.as_of_date ?? "—"}</p>
+        {finance?.bps_reference && <BpsReference key={`${symbol}:${finance.bps_reference.fingerprint}`} reference={finance.bps_reference} symbol={symbol} />}
         {finance?.issues?.map((issue) => <p key={`${issue.category}:${issue.message}`}><strong>{statusLabels[issue.category] ?? issue.category}：</strong>{issue.message}</p>)}
         <dl className="research-metrics">{Object.entries(finance?.metrics ?? {}).map(([key, value]) =>
           <div key={key}><dt>{metricLabels[key] ?? key}</dt><dd>{value == null ? "未算出" : typeof value === "number" ? value.toLocaleString("ja-JP", { maximumFractionDigits: 2 }) : value}</dd></div>)}</dl>

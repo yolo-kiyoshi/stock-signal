@@ -195,17 +195,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding: 5px 8px;
 }
 .candidate-horizon button[aria-pressed="true"] { background: var(--ink); color: white; }
-.candidate-filters { display: flex; flex-wrap: wrap; gap: 5px; }
-.candidate-filters button {
+.candidate-filters { display: grid; gap: 5px; }
+.candidate-filters > span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.candidate-filters select {
   background: var(--surface-soft);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 7px;
+  color: var(--ink);
   cursor: pointer;
-  flex: 0 0 auto;
-  font-size: 9px;
-  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+  min-height: 32px;
+  min-width: 0;
+  width: 100%;
+  padding: 5px 6px;
 }
-.candidate-filters button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: white; }
 .sidebar-search-tools { border-top: 1px solid var(--line); flex: 0 0 auto; padding: 9px 12px 7px; }
 .sidebar-search { display: block; }
 .sidebar-search span { left: -9999px; position: absolute; }
@@ -631,6 +635,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .research-settings { display: grid; gap: 12px; margin-top: 14px; }
 .research-settings label { display: grid; gap: 5px; }
 .research-settings input { width: 100%; padding: 8px; color: inherit; background: transparent; border: 1px solid #64748b; border-radius: 5px; }
+.research-settings label:has(input[type="checkbox"]) { grid-template-columns: auto 1fr; align-items: start; gap: 8px; }
+.research-settings input[type="checkbox"] { width: 16px; height: 16px; margin-top: 3px; }
+.research-settings textarea { width: 100%; min-height: 90px; padding: 8px; color: inherit; background: transparent; border: 1px solid #64748b; border-radius: 5px; }
 
 /* 一覧操作は既存の柔らかい背景・濃緑の選択状態に統一する。 */
 .list-tool-button {
@@ -656,7 +663,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .candidate-summary dd { font-size: 18px; font-weight: 700; margin: 2px 0 0; font-variant-numeric: tabular-nums; }
 .candidate-summary dd small { font-size: 10px; font-weight: 400; margin-left: 4px; }
 .candidate-summary-buy dd { color: var(--green); }
-.candidate-horizon button, .candidate-filters button { font-size: 11px; min-height: 32px; }
+.candidate-horizon button { font-size: 11px; min-height: 32px; }
 .list-results-toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; margin-top: 8px; }
 .list-results-toolbar > span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .list-results-toolbar strong { color: var(--ink); }
@@ -710,3 +717,50 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .journal-history { border-top: 1px solid var(--line); padding-top: 1rem; overflow-wrap: anywhere; }
 .journal-history p { white-space: pre-wrap; }
 @media (max-width: 700px) { .journal-form { grid-template-columns: 1fr; } }
+
+/* 分析軸を並べて確認する全体集計 */
+.candidate-dashboard { flex: 0 0 auto; width: calc(100% - 36px); max-width: 1644px; margin: 12px auto 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); max-height: 42vh; overflow: auto; }
+.candidate-dashboard-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.candidate-dashboard h2 { font-size: 16px; margin: 0; }
+.candidate-dashboard p { color: var(--muted); font-size: 11px; margin: 5px 0; }
+.candidate-dashboard-labels, .candidate-dashboard-row { display: grid; grid-template-columns: minmax(165px, 1.4fr) repeat(5, minmax(90px, 1fr)); gap: 8px; align-items: stretch; }
+.candidate-dashboard-labels { font-size: 12px; color: var(--muted); text-align: center; margin: 8px 0 4px; }
+.candidate-dashboard-labels span:first-child { text-align: left; }
+.candidate-dashboard-axis + .candidate-dashboard-axis { border-top: 1px solid var(--line); padding-top: 6px; }
+.candidate-axis-title { display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 13px; }
+.candidate-axis-title small { color: var(--muted); font-size: 10px; }
+.candidate-count { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); padding: 5px 8px; cursor: pointer; }
+.candidate-count strong { font-size: 23px; font-variant-numeric: tabular-nums; }
+.candidate-count small { margin-left: 5px; font-size: 10px; }
+.candidate-count-buy { color: var(--green); background: #edf5ee; }
+.candidate-count[aria-pressed="true"], .candidate-checks button[aria-pressed="true"] { outline: 2px solid var(--blue); outline-offset: -2px; background: #edf4fa; }
+.candidate-count:disabled { cursor: default; color: var(--muted); }
+.candidate-count:disabled strong { font-size: 13px; }
+.candidate-count-label { display: none; }
+.candidate-checks { margin: 5px 0; font-size: 11px; color: var(--muted); }
+.candidate-checks summary { cursor: pointer; }
+.candidate-checks button { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 5px 9px; margin: 3px 6px 3px 0; cursor: pointer; }
+.candidate-list-title { font-size: 13px; line-height: 1.6; }
+@media (max-width: 900px) {
+  .candidate-dashboard-labels { display: none; }
+  .candidate-dashboard-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .candidate-axis-title { grid-column: 1 / -1; margin-top: 8px; }
+  .candidate-count-label { display: block; font-size: 11px; }
+}
+@media (max-width: 760px) {
+  .candidate-dashboard { max-height: none; width: calc(100% - 20px); padding: 12px; }
+  .candidate-dashboard-heading { align-items: flex-start; }
+  .candidate-dashboard-heading button { font-size: 11px; max-width: 130px; }
+}
+
+/* 全体集計と個別分析は独立した画面として高さを確保する。 */
+.workspace-view-tabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 8px 18px 0; width: 100%; max-width: 1680px; margin: 0 auto; }
+.workspace-view-tabs button { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 8px 18px; cursor: pointer; font-size: 13px; }
+.workspace-view-tabs button[aria-selected="true"] { background: var(--ink); color: white; border-color: var(--ink); }
+.dashboard-view-panel { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: 16px; }
+.dashboard-view-panel .candidate-dashboard { max-height: none; overflow: visible; }
+.workspace[hidden], .dashboard-view-panel[hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .workspace-view-tabs { padding: 8px 10px 0; }
+  .dashboard-view-panel { overflow: visible; }
+}

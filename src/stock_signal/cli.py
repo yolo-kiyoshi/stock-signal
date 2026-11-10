@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     historical_report_parser = subparsers.add_parser(
         "historical-report",
-        help="スイング・中長期の過去当てはめ実績HTMLを生成する",
+        help="スイング・中期押し目の過去当てはめ実績HTMLを生成する",
     )
     historical_report_parser.add_argument("symbol", help="保存済みの4文字の証券コード")
     historical_report_parser.add_argument(

@@ -1236,6 +1236,27 @@ def replace_market_analysis_snapshots(database_url: str, records: list[dict]) ->
             connection.execute(insert(analysis_snapshots), records)
 
 
+def candidate_universe(database_url: str) -> dict[str, object]:
+    """集計対象の有効銘柄と、各分析軸の最新保存日時を返す。"""
+    with get_engine(database_url).connect() as connection:
+        rows = connection.execute(
+            select(
+                instruments.c.symbol, instruments.c.provider, instruments.c.display_name,
+                instruments.c.market, instruments.c.instrument_type,
+                instruments.c.sector_17_name, instruments.c.sector_33_name,
+            ).where(instruments.c.provider == "jquants", instruments.c.is_active.is_(True))
+        ).mappings().all()
+        saved = connection.execute(
+            select(analysis_snapshots.c.horizon_days, func.max(analysis_snapshots.c.created_at))
+            .where(analysis_snapshots.c.provider == "jquants")
+            .group_by(analysis_snapshots.c.horizon_days)
+        ).all()
+    return {
+        "items": [dict(row) for row in rows],
+        "saved_at": {str(horizon): timestamp.isoformat() for horizon, timestamp in saved},
+    }
+
+
 def list_market_candidates(
     database_url: str,
     *,
@@ -1272,7 +1293,12 @@ def list_market_candidates(
     ) | (
         analysis_snapshots.c.as_of_date
         < func.coalesce(latest_price_date, analysis_snapshots.c.as_of_date)
-    ) | (analysis_snapshots.c.as_of_date < date.today() - timedelta(days=4))
+    ) | (analysis_snapshots.c.as_of_date < date.today() - timedelta(days=4)) | (
+        func.coalesce(
+            analysis_snapshots.c.analysis_json["research"]["financials"]
+            ["bps_reference"]["valid_until"].astext, "9999-12-31",
+        ) < date.today().isoformat()
+    )
     effective_action = case(
         (needs_reanalysis & (analysis_snapshots.c.action == "buy_candidate"), "watch"),
         else_=analysis_snapshots.c.action,
@@ -2027,6 +2053,7 @@ def load_latest_market_regime_snapshot(
 def reset_database(database_url: str) -> None:
     """テスト用に全業務テーブルを空へ戻し、既定値を再作成する。"""
     table_names = [
+        "bps_reviews",
         "financial_disclosures",
         "portfolio_risk_settings",
         market_regime_snapshots.name,

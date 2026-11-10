@@ -41,8 +41,14 @@ def test_jsp_double_top_with_intermediate_peak():
         result = RuleBasedAnalysisEngine(
             decision_policy=LongOnlyDecisionPolicy(today=lambda: date(2026, 9, 9))
         ).analyze("7942", bars, horizon)
-        assert result.investment_decision.action is InvestmentAction.WATCH
-        assert "目標水準へ到達" in result.investment_decision.summary
+        # 目標到達した下降だけで保留せず、現在の方向と押し目条件で再評価する。
+        assert any("目標水準へ到達" in life.summary for life in result.pattern_lifecycles)
+        if horizon == 5:
+            assert result.investment_decision.action is InvestmentAction.AVOID_NEW_BUY
+            assert "下落要因が優勢" in result.investment_decision.summary
+        else:
+            assert result.investment_decision.action is InvestmentAction.WATCH
+            assert "安値切り下げ" in result.investment_decision.summary
         breakout = RuleBasedAnalysisEngine(
             decision_policy=LongOnlyDecisionPolicy(today=lambda: date(2026, 9, 4))
         ).analyze("7942", [b for b in bars if b.trade_date <= date(2026, 9, 4)], horizon)

@@ -72,7 +72,7 @@ class TransitionReadinessEvaluatorProtocol(Protocol):
 
 
 class PositionEntryEvaluatorProtocol(Protocol):
-    """中長期の押し目・支持帯評価を交換可能にする契約。"""
+    """中期押し目・支持帯評価を交換可能にする契約。"""
 
     def evaluate(
         self,

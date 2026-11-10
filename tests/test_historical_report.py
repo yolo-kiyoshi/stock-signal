@@ -93,7 +93,7 @@ def test_render_historical_fit_report_compares_both_horizons(tmp_path) -> None:
     content = output_path.read_text(encoding="utf-8")
     assert "過去当てはめ実績" in content
     assert "スイング・5営業日後" in content
-    assert "中長期・20営業日後" in content
+    assert "中期押し目・20営業日後" in content
     assert "方向一致率" in content
     assert "2026-06-23" in content
     assert "一致" in content

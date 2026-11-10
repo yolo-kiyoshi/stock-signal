@@ -380,6 +380,16 @@ financial_disclosures = Table(
     Column("first_seen_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
 )
 
+bps_reviews = Table(
+    "bps_reviews",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("symbol", String(12), nullable=False, index=True),
+    Column("provider", String(40), nullable=False),
+    Column("payload", JSONB, nullable=False),
+    Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+)
+
 portfolio_risk_settings = Table(
     "portfolio_risk_settings",
     metadata,

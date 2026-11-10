@@ -3,7 +3,7 @@ import type { EntryDiagnostics } from "@/types/api";
 export const entryStrategyLabels: Record<string, string> = {
   breakout: "ブレイク追随",
   swing_pullback: "スイング押し目反発",
-  position_pullback: "中長期押し目",
+  position_pullback: "中期押し目",
 };
 
 function value(number: number | null | undefined, unit: string, signed = false) {

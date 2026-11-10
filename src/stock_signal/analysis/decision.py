@@ -220,8 +220,9 @@ class LongOnlyDecisionPolicy:
         )
         confirmation_reasons = []
         latest_patterns = self._latest_patterns(patterns)
-        lead = max(latest_patterns, key=lambda item: item.fit_score) if latest_patterns else None
-        if bars and lead and lead.direction is Direction.UP:
+        bullish_patterns = [item for item in latest_patterns if item.direction is Direction.UP]
+        lead = max(bullish_patterns, key=lambda item: item.fit_score) if bullish_patterns else None
+        if bars and lead:
             current = bars[-1]
             if float(current.close) <= lead.breakout_level:
                 confirmation_reasons.append(
@@ -278,7 +279,7 @@ class LongOnlyDecisionPolicy:
             checks,
             horizon_days,
         )
-        latest = self._latest_patterns(patterns)
+        latest = self._current_patterns(patterns, lifecycles)
         lead = max(latest, key=lambda item: item.fit_score) if latest else None
         lifecycle_by_type = {item.pattern_type: item for item in lifecycles}
         lifecycle = lifecycle_by_type.get(lead.pattern_type) if lead else None
@@ -295,7 +296,8 @@ class LongOnlyDecisionPolicy:
             and not any(
                 item.status in {PatternLifecycleStatus.FAILED, PatternLifecycleStatus.WEAKENING}
                 for item in lifecycles
-                if lead is not None and item.detected_at == lead.detected_at
+                if lead is not None and item.pattern_type == lead.pattern_type
+                and item.detected_at == lead.detected_at
             )
         ):
             decision = self._decide_position_entry(
@@ -467,7 +469,7 @@ class LongOnlyDecisionPolicy:
         horizon_days: int,
     ) -> InvestmentDecision:
         profile = get_horizon_profile(horizon_days)
-        latest_patterns = self._latest_patterns(patterns)
+        latest_patterns = self._current_patterns(patterns, lifecycles)
         lifecycle_by_type = {item.pattern_type: item for item in lifecycles}
         bullish = [item for item in latest_patterns if item.direction is Direction.UP]
         bearish = [item for item in latest_patterns if item.direction is Direction.DOWN]
@@ -484,6 +486,10 @@ class LongOnlyDecisionPolicy:
                 CheckStatus.ADDON_REQUIRED,
             }
         ]
+        if len(latest_patterns) < len(self._latest_patterns(patterns)):
+            cautions.append(
+                "終了・弱化した下降パターンは履歴として残し、現在の押し目・方向・リスク条件で再評価します"
+            )
         cautions.append("この区分は分析情報であり、注文や利益を保証するものではありません")
         cautions.append(
             f"{profile.label}は{profile.future_label}を確認する固定ルールであり、"
@@ -528,23 +534,6 @@ class LongOnlyDecisionPolicy:
 
         if bearish:
             lead = max(bearish, key=lambda item: item.fit_score)
-            lifecycle = lifecycle_by_type.get(lead.pattern_type)
-            if lifecycle and lifecycle.status in {
-                PatternLifecycleStatus.FAILED,
-                PatternLifecycleStatus.WEAKENING,
-                PatternLifecycleStatus.TARGET_REACHED,
-                PatternLifecycleStatus.EXPIRED,
-            }:
-                return InvestmentDecision(
-                    InvestmentAction.WATCH,
-                    round((lead.fit_score + evidence_score) / 2, 1),
-                    lifecycle.summary,
-                    (
-                        lead.description,
-                        "古い、弱まった、または完了した下降パターンだけでは売買を判断しません",
-                    ),
-                    tuple(cautions),
-                )
             return InvestmentDecision(
                 InvestmentAction.AVOID_NEW_BUY,
                 round((lead.fit_score + evidence_score) / 2, 1),
@@ -924,6 +913,29 @@ class LongOnlyDecisionPolicy:
             tuple(reasons),
             tuple(cautions),
         )
+
+    @classmethod
+    def _current_patterns(
+        cls,
+        patterns: Sequence[PatternDetection],
+        lifecycles: Sequence[PatternLifecycleAssessment],
+    ) -> list[PatternDetection]:
+        """最新検出群から終了・弱化した下降だけを除き、古い検出は復活させない。"""
+        inactive = {
+            (item.pattern_type, item.detected_at)
+            for item in lifecycles
+            if item.status in {
+                PatternLifecycleStatus.FAILED,
+                PatternLifecycleStatus.WEAKENING,
+                PatternLifecycleStatus.TARGET_REACHED,
+                PatternLifecycleStatus.EXPIRED,
+            }
+        }
+        return [
+            item for item in cls._latest_patterns(patterns)
+            if item.direction is not Direction.DOWN
+            or (item.pattern_type, item.detected_at) not in inactive
+        ]
 
     @staticmethod
     def _latest_patterns(patterns: Sequence[PatternDetection]) -> list[PatternDetection]:

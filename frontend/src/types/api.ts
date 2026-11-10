@@ -120,6 +120,8 @@ export type DashboardData = {
   watchlist: InstrumentListItem[];
   positions: PositionItem[];
   candidates: Record<"5" | "20", MarketCandidate[]>;
+  candidateUniverse?: { items: InstrumentListItem[]; saved_at: Record<string, string> };
+  candidateErrors?: Partial<Record<"5" | "20" | "universe", boolean>>;
   plan: string;
   capabilities: PlanCapability[];
   aiCapability: AiCapability;
@@ -302,7 +304,16 @@ export type AiReviewResponse = {
 
 export type ResearchAssessment = {
   version: string;
+  screening_status?: string;
   financials: {
+    bps_reference?: {
+      status: string; value: number | null; source_value: number | null;
+      source_disclosure_no: string | null; source_disclosed_date: string | null;
+      source_period_end: string | null; source_doc_type: string | null;
+      reason: string; fingerprint?: string; reviewable: boolean;
+      max_age_days: number; review_max_age_days: number; review_status: string;
+      review: { checked_on: string; evidence_url?: string; notes?: string } | null;
+    };
     status: string; as_of_date: string; disclosed_date: string | null;
     metrics: Record<string, number | string | null>; cautions: string[];
     event_status: string; events: string[];

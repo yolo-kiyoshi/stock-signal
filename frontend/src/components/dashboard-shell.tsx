@@ -1,9 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import type { FormEvent } from "react";
 
+import { CandidateDashboard } from "@/components/candidate-dashboard";
+import { candidateLabels, candidateUniverse, matchesCandidate } from "@/lib/candidate-summary";
+import type { CandidateAction } from "@/lib/candidate-summary";
 import { ResearchPanel } from "@/components/research-panel";
 import { PositionJournal } from "@/components/position-journal";
 import { EntryDiagnosticsView, entryStrategyLabels } from "@/components/entry-diagnostics";
@@ -19,8 +22,33 @@ import type {
   RakutenImportResponse,
 } from "@/types/api";
 
+type WorkspaceView = "dashboard" | "analysis";
+const workspaceViewKey = "tomoshibiyori.workspace-view";
+let fallbackWorkspaceView: WorkspaceView = "dashboard";
+function readWorkspaceView(): WorkspaceView {
+  try {
+    const saved = window.localStorage.getItem(workspaceViewKey);
+    return saved === "analysis" ? "analysis" : "dashboard";
+  } catch {
+    return fallbackWorkspaceView;
+  }
+}
+function subscribeWorkspaceView(callback: () => void): () => void {
+  window.addEventListener("storage", callback);
+  window.addEventListener("workspace-view-change", callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener("workspace-view-change", callback);
+  };
+}
+function switchWorkspaceView(view: WorkspaceView): void {
+  fallbackWorkspaceView = view;
+  try { window.localStorage.setItem(workspaceViewKey, view); } catch { /* 保存不可でも切り替えを許可する。 */ }
+  window.dispatchEvent(new Event("workspace-view-change"));
+}
+const defaultWorkspaceView = (): WorkspaceView => "dashboard";
+
 type Tab = "positions" | "watchlist" | "candidates";
-type CandidateAction = "all" | "market_only" | MarketCandidate["action"];
 type ChartRange = "1m" | "3m" | "6m" | "1y" | "all";
 type NavItem = InstrumentListItem & Partial<MarketCandidate> & Partial<PositionItem>;
 type ListFilters = {
@@ -59,6 +87,11 @@ const entryStageLabels: Record<string, string> = {
   avoid: "購入回避",
   not_applicable: "買い条件なし",
 };
+const screeningStageLabels: Record<string, string> = {
+  needs_reanalysis: "再分析待ち", data_pending: "財務データ取得待ち",
+  metrics_missing: "財務確認待ち", review_required: "財務確認待ち",
+  financial_caution: "財務・イベント注意", risk_hold: "資金・その他リスク保留",
+};
 const instrumentTypeLabels: Record<string, string> = {
   stock: "株式",
   etf: "ETF",
@@ -92,7 +125,7 @@ const horizonProfiles = {
     caution: "企業価値は評価しません。出来高と無効化水準も確認してください。",
   },
   20: {
-    label: "中長期の買い場",
+    label: "中期押し目",
     future: "20営業日先",
     holding: "数週間〜数か月の買い場確認",
     purpose: "中期上昇トレンド内の押し目と支持帯を確認",
@@ -123,7 +156,7 @@ function freshnessTag(item: NavItem): string {
 }
 
 function initialInstrument(data: DashboardData): NavItem | null {
-  return data.positions[0] ?? data.watchlist[0] ?? data.candidates["5"][0] ?? null;
+  return data.positions[0] ?? data.watchlist[0] ?? data.candidates["5"][0] ?? data.candidates["20"][0] ?? null;
 }
 
 async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -146,7 +179,9 @@ function parseSymbols(value: string): string[] {
 
 export function DashboardShell({ data }: { data: DashboardData }) {
   const router = useRouter();
+  const workspaceView = useSyncExternalStore(subscribeWorkspaceView, readWorkspaceView, defaultWorkspaceView);
   const [refreshing, startRefresh] = useTransition();
+  const candidateListHeadingRef = useRef<HTMLHeadingElement>(null);
   const mainPanelRef = useRef<HTMLElement>(null);
   const preservedScrollTopRef = useRef<number | null>(null);
   const firstInstrument = initialInstrument(data);
@@ -189,19 +224,8 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
 
-  const candidateItems = data.candidates[String(candidateHorizon) as "5" | "20"];
-  const candidateHoldReasons = Object.entries(candidateItems.reduce<Record<string, number>>((counts, item) => {
-    if (item.action !== "buy_candidate") {
-      const reason = item.judgment_reason || "条件未充足・詳細を確認してください";
-      counts[reason] = (counts[reason] ?? 0) + 1;
-    }
-    return counts;
-  }, {})).sort((left, right) => right[1] - left[1]).slice(0, 3);
-  const actionFilteredCandidates = candidateAction === "all"
-    ? candidateItems
-    : candidateItems.filter((item) => candidateAction === "market_only"
-      ? item.market_gate_diagnostic?.status === "market_only"
-      : item.action === candidateAction);
+  const candidateItems = useMemo(() => candidateUniverse(data, candidateHorizon), [data, candidateHorizon]);
+  const actionFilteredCandidates = candidateItems.filter(item => matchesCandidate(item, candidateAction));
   const activeItems: NavItem[] = tab === "positions"
     ? data.positions
     : tab === "watchlist"
@@ -359,12 +383,8 @@ export function DashboardShell({ data }: { data: DashboardData }) {
 
   function switchCandidateHorizon(nextHorizon: 5 | 20): void {
     preserveMainScroll();
-    const nextCandidates = data.candidates[String(nextHorizon) as "5" | "20"];
-    const filteredCandidates = candidateAction === "all"
-      ? nextCandidates
-      : nextCandidates.filter((item) => candidateAction === "market_only"
-        ? item.market_gate_diagnostic?.status === "market_only"
-        : item.action === candidateAction);
+    const nextCandidates = candidateUniverse(data, nextHorizon);
+    const filteredCandidates = nextCandidates.filter(item => matchesCandidate(item, candidateAction));
     const sameInstrument = filteredCandidates.find(
       (item) => item.symbol === selected?.symbol && item.provider === selected.provider,
     );
@@ -381,6 +401,27 @@ export function DashboardShell({ data }: { data: DashboardData }) {
     } else {
       setSelected(null);
       setLoading(false);
+    }
+  }
+
+  function selectCandidateSummary(nextHorizon: 5 | 20, action: CandidateAction): void {
+    switchWorkspaceView("analysis");
+    setTab("candidates");
+    setSidebarCollapsed(false);
+    setCandidateHorizon(nextHorizon);
+    setHorizon(nextHorizon);
+    setCandidateAction(action);
+    setQuery("");
+    setListFilters(defaultListFilters);
+    requestAnimationFrame(() => candidateListHeadingRef.current?.focus());
+    const first = candidateUniverse(data, nextHorizon).find(item => matchesCandidate(item, action));
+    if (first) beginSelection(first);
+    else {
+      setSelected(null);
+      setLoading(false);
+      setAnalysis(null);
+      setBars(null);
+      setError(null);
     }
   }
 
@@ -580,7 +621,32 @@ export function DashboardShell({ data }: { data: DashboardData }) {
   const horizonProfile = horizonProfiles[horizon];
 
   return (
-    <div className={`workspace${sidebarCollapsed ? " sidebar-is-collapsed" : ""}`}>
+    <>
+    <div className="workspace-view-tabs" role="tablist" aria-label="表示画面">
+      {(["dashboard", "analysis"] as const).map(view => (
+        <button key={view} type="button" role="tab" id={`view-tab-${view}`}
+          aria-controls={`view-panel-${view}`} aria-selected={workspaceView === view}
+          tabIndex={workspaceView === view ? 0 : -1}
+          onClick={() => switchWorkspaceView(view)}
+          onKeyDown={event => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === "Home" ? "dashboard" : event.key === "End" ? "analysis" : view === "dashboard" ? "analysis" : "dashboard";
+            switchWorkspaceView(next);
+            document.getElementById(`view-tab-${next}`)?.focus();
+          }}>
+          {view === "dashboard" ? "ダッシュボード" : "銘柄分析"}
+        </button>
+      ))}
+    </div>
+    <div id="view-panel-dashboard" role="tabpanel" aria-labelledby="view-tab-dashboard"
+      className="dashboard-view-panel" hidden={workspaceView !== "dashboard"}>
+    <CandidateDashboard data={data} selectedHorizon={tab === "candidates" ? candidateHorizon : null}
+      selectedAction={candidateAction} onSelect={selectCandidateSummary} refreshing={refreshing}
+      onRefresh={() => startRefresh(() => router.refresh())} />
+    </div>
+    <div id="view-panel-analysis" role="tabpanel" aria-labelledby="view-tab-analysis"
+      hidden={workspaceView !== "analysis"} className={`workspace${sidebarCollapsed ? " sidebar-is-collapsed" : ""}`}>
       <aside className={`instrument-sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
         <div className="sidebar-toolbar">
           <strong>銘柄ナビゲーション</strong>
@@ -687,46 +753,24 @@ export function DashboardShell({ data }: { data: DashboardData }) {
           )}
           {tab === "candidates" && (
             <div className="candidate-controls">
-              <details className="candidate-overview">
-                <summary>保存済みの分析結果・集計 <span>日足 {candidateItems[0]?.as_of_date ?? "未生成"}</span></summary>
-                <div className="candidate-heading">
-                  <span>日足 {candidateItems[0]?.as_of_date ?? "未生成"}</span>
-                  <button type="button" className="list-tool-button" disabled={refreshing}
-                    onClick={() => startRefresh(() => router.refresh())}>
-                    <span aria-hidden="true">↻</span> {refreshing ? "再読み込み中…" : "一覧を再読み込み"}
-                  </button>
-                </div>
-                <p className="candidate-refresh-note" role="status">
-                  {refreshing ? "保存済みの最新一覧を読み込んでいます" : "保存済みの分析結果を表示"}
-                </p>
-                <dl className="candidate-summary" aria-label="絞り込み前の候補件数">
-                  <div><dt>テクニカル通過</dt><dd>{candidateItems.filter((item) => item.technical_action === "buy_candidate").length}<small>件</small></dd></div>
-                  <div className="candidate-summary-buy"><dt>購入候補</dt><dd>{candidateItems.filter((item) => item.action === "buy_candidate").length}<small>件</small></dd></div>
-                  {Object.entries({ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }).map(([status, label]) => <div key={status}><dt>{label}</dt><dd>{candidateItems.filter((item) => item.screening_status === status).length}<small>件</small></dd></div>)}
-                  <div><dt>リスク保留</dt><dd>{candidateItems.filter((item) => item.screening_status === "risk_hold").length}<small>件</small></dd></div>
-                </dl>
-                {candidateItems.length > 0 && !candidateItems.some((item) => item.action === "buy_candidate") && (
-                  <details className="candidate-refresh-note">
-                    <summary>購入候補0件の理由（{candidateItems.length}銘柄を分析済み）</summary>
-                    <p>表示日の条件を満たす銘柄がありません。過去日の候補は含めていません。</p>
-                    <ul>{candidateHoldReasons.map(([reason, count]) => <li key={reason}>{reason}：{count}件</li>)}</ul>
-                  </details>
-                )}
-              </details>
-              {candidateItems.some((item) => item.screening_status === "needs_reanalysis") && <p className="candidate-refresh-note">再分析待ちの銘柄は購入候補から除外しています。再分析が完了すると一覧に反映されます。</p>}
+              <h3 ref={candidateListHeadingRef} tabIndex={-1} className="candidate-list-title" aria-live="polite">{candidateHorizon === 5 ? "スイング" : "中期押し目"} ＞ {candidateLabels[candidateAction]}：{data.candidateErrors?.[String(candidateHorizon) as "5" | "20"] ? "取得失敗" : `${actionFilteredCandidates.length}銘柄`}</h3>
+              {data.candidateErrors?.[String(candidateHorizon) as "5" | "20"] && <p role="alert">分析結果の取得に失敗しました。上部の再読み込みで再試行できます。</p>}
               <div className="candidate-horizon">
                 <span>候補の分析軸</span>
                 <div role="group" aria-label="分析候補の運用スタイル">
                   <button type="button" aria-pressed={candidateHorizon === 5} onClick={() => switchCandidateHorizon(5)}>スイング</button>
-                  <button type="button" aria-pressed={candidateHorizon === 20} onClick={() => switchCandidateHorizon(20)}>中長期</button>
+                  <button type="button" aria-pressed={candidateHorizon === 20} onClick={() => switchCandidateHorizon(20)}>中期押し目</button>
                 </div>
               </div>
               <p className="candidate-refresh-note">TOPIX下落条件だけを除くと技術条件を満たす銘柄：{candidateItems.filter((item) => item.market_gate_diagnostic?.status === "market_only").length}件。購入候補ではありません。財務・資金・外部環境は別途確認が必要です。</p>
-              <div className="candidate-filters" role="group" aria-label="投資検討区分">
-                {(["all", "buy_candidate", "watch", "avoid_new_buy", "market_only"] as const).map((action) => (
-                  <button type="button" key={action} aria-pressed={candidateAction === action} onClick={() => setCandidateAction(action)}>{action === "all" ? "すべて" : action === "market_only" ? "技術条件：TOPIXのみ保留" : actionLabels[action]}</button>
+              <label className="candidate-filters">
+                <span>投資検討区分</span>
+                <select value={candidateAction} onChange={(event) => setCandidateAction(event.target.value as CandidateAction)}>
+                {(["all", "buy_candidate", "financial_pending", "financial_caution", "watch", "avoid_new_buy", "unassessed", "market_only"] as const).map((action) => (
+                  <option key={action} value={action}>{action === "all" ? "すべて" : action === "market_only" ? "技術条件：TOPIXのみ保留" : action === "financial_pending" ? "テクニカル通過・財務確認待ち" : action === "financial_caution" ? "財務・イベント注意" : candidateLabels[action]}</option>
                 ))}
-              </div>
+                </select>
+              </label>
             </div>
           )}
 
@@ -810,9 +854,10 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                       )}
                     </span>
                     <span className="instrument-status">
-                    {tab !== "candidates" && ["data_pending", "metrics_missing", "review_required"].includes(item.screening_status ?? "") && <small className="pending-label">{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[item.screening_status as string]}</small>}
+                    {["data_pending", "metrics_missing", "review_required", "financial_caution"].includes(item.screening_status ?? "") && <small className="pending-label">{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "財務確認待ち：比較・内容確認", financial_caution: "財務・イベント注意" }[item.screening_status as string]}</small>}
                     {item.market_gate_diagnostic?.status === "market_only" && <small>技術条件：TOPIXのみ保留</small>}
-                    {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${item.screening_status === "needs_reanalysis" ? "再分析待ち" : entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
+                    {tab === "candidates" && !item.action && <small>未判定</small>}
+                    {item.action && <small className={`action-${item.action}`}>{actionLabels[item.action]}{item.action === "watch" && item.entry_stage ? `・${screeningStageLabels[item.screening_status ?? ""] ?? entryStageLabels[item.entry_stage] ?? item.entry_stage}` : ""}</small>}
                     </span>
                   </button>
                   <button type="button" className={`row-action${watched ? " is-added" : ""}`} aria-label={`${item.symbol}をウォッチへ追加`} title={watched ? "ウォッチ登録済み" : "ウォッチへ追加"} disabled={watched || mutating} onClick={() => addCandidateToWatchlist(item)}>{watched ? "✓" : "+"}</button>
@@ -894,7 +939,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 <em className={selected.freshness_status === "fresh" ? "tag-fresh" : "tag-caution"} title={selected.latest_trade_date ? `最新日足 ${selected.latest_trade_date}` : "日足データがありません"}>{freshnessTag(selected)}</em>
               </span>
             )}
-            {selected?.screening_status && ["data_pending", "metrics_missing", "review_required"].includes(selected.screening_status) && <p>{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "比較・内容確認が必要" }[selected.screening_status]}</p>}
+            {selected?.screening_status && ["data_pending", "metrics_missing", "review_required"].includes(selected.screening_status) && <p>{{ data_pending: "データ取得待ち", metrics_missing: "算出に必要な項目不足", review_required: "財務確認待ち：比較・内容確認", financial_caution: "財務・イベント注意" }[selected.screening_status]}</p>}
             {bars && <p>{bars.range.from}〜{bars.range.to}・{bars.source.is_adjusted ? "調整済み" : "未調整"}</p>}
           </div>
           <div className="latest-price"><span>最新終値</span><strong>{latestBar ? `${Number(latestBar.close).toLocaleString("ja-JP", { maximumFractionDigits: 2 })}円` : "—"}</strong><small>{bars?.freshness.latest_trade_date ?? "データ未読込"}</small></div>
@@ -902,7 +947,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
             <div className="analysis-context-label"><span>分析スタイル</span><button type="button" className="help-button" title={horizonProfile.caution} aria-label={`分析スタイルの注意: ${horizonProfile.caution}`}>?</button></div>
             <div className="horizon-switch" role="group" aria-label="運用スタイル">
               <button type="button" aria-pressed={horizon === 5} className={horizon === 5 ? "active" : ""} onClick={() => switchDetailHorizon(5)}><strong>スイング</strong><span>5営業日先</span></button>
-              <button type="button" aria-pressed={horizon === 20} className={horizon === 20 ? "active" : ""} onClick={() => switchDetailHorizon(20)}><strong>中長期の買い場</strong><span>20営業日先</span></button>
+              <button type="button" aria-pressed={horizon === 20} className={horizon === 20 ? "active" : ""} onClick={() => switchDetailHorizon(20)}><strong>中期押し目</strong><span>20営業日先</span></button>
             </div>
             <div className="analysis-context-copy"><strong>{horizonProfile.purpose}</strong><span>{horizonProfile.holding}</span></div>
           </div>
@@ -914,7 +959,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
         {!loading && !error && bars && analysis && (
           <>
             <section className="chart-card">
-              <div className="section-heading chart-heading"><div><span className="eyebrow">価格と需給</span><h3>日足・出来高</h3></div><p>{customRange ? "期間指定" : rangeLabels[chartRange]}・{horizon === 5 ? "スイング基準" : "中長期基準"}</p></div>
+              <div className="section-heading chart-heading"><div><span className="eyebrow">価格と需給</span><h3>日足・出来高</h3></div><p>{customRange ? "期間指定" : rangeLabels[chartRange]}・{horizon === 5 ? "スイング基準" : "中期押し目基準"}</p></div>
               <div className="chart-controls">
                 <div className="range-switch" role="group" aria-label="表示期間">
                   {(Object.keys(rangeLabels) as ChartRange[]).map((range) => <button type="button" key={range} className={!customRange && chartRange === range ? "active" : ""} onClick={() => switchChartRange(range)}>{rangeLabels[range]}</button>)}
@@ -939,7 +984,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
                 <span className="eyebrow">上抜け検出と購入条件</span>
                 <small>上抜け検出：{analysis.patterns.some((pattern) => pattern.direction === "up") ? "検出済み（有効性は下の条件を確認）" : "未検出"}</small>
                 <small>購入条件：{decision?.action === "buy_candidate" && decision.entry_stage === "entry_ready" ? "充足（分析ルール上）" : decision?.action === "watch" ? "確認待ち" : "未充足・判定対象外"}</small>
-                <strong>{analysis.equity_checks.some((check) => check.key === "upper_resistance_confirmation") && decision?.action === "watch" ? "上位抵抗帯の突破確認待ち" : decision?.entry_stage_label ?? "未評価"}</strong>
+                <strong>{screeningStageLabels[analysis.research?.screening_status ?? ""] ?? (analysis.equity_checks.some((check) => check.key === "upper_resistance_confirmation") && decision?.action === "watch" ? "上位抵抗帯の突破確認待ち" : decision?.entry_stage_label ?? "未評価")}</strong>
                 <small>{decision?.entry_strategy ? entryStrategyLabels[decision.entry_strategy] ?? "判定経路未確認" : "判定経路未算出"}</small>
                 {analysis.market_gate_diagnostic && <div className="candidate-refresh-note">
                   <strong>{analysis.market_gate_diagnostic.status === "market_only" ? "技術条件：TOPIXのみ保留" : "TOPIX以外の条件も未充足"}</strong>
@@ -958,7 +1003,7 @@ export function DashboardShell({ data }: { data: DashboardData }) {
               </article>
             </section>
 
-            <ResearchPanel research={analysis.research} />
+            <ResearchPanel research={analysis.research} symbol={analysis.symbol} />
 
             {stage && (
               <section className="stage-card">
@@ -1005,5 +1050,6 @@ export function DashboardShell({ data }: { data: DashboardData }) {
         )}
       </main>
     </div>
+    </>
   );
 }

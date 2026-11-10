@@ -25,11 +25,12 @@ async function loadMarketCandidates(horizon: 5 | 20): Promise<{ items: MarketCan
 }
 
 export async function loadDashboardData(): Promise<DashboardData> {
-  const [watchlist, positions, swing, position, dataPlan, aiCapability, marketEnvironment] = await Promise.all([
+  const [watchlist, positions, swing, position, universe, dataPlan, aiCapability, marketEnvironment] = await Promise.all([
     backendJson<{ items: InstrumentListItem[] }>("/api/v1/watchlist"),
     backendJson<{ items: PositionItem[] }>("/api/v1/portfolio/positions"),
-    loadMarketCandidates(5),
-    loadMarketCandidates(20),
+    loadMarketCandidates(5).catch(() => null),
+    loadMarketCandidates(20).catch(() => null),
+    backendJson<NonNullable<DashboardData["candidateUniverse"]>>("/api/v1/candidate-universe").catch(() => null),
     backendJson<{ plan: string; capabilities: PlanCapability[] }>(
       "/api/v1/data-plan",
     ),
@@ -40,7 +41,9 @@ export async function loadDashboardData(): Promise<DashboardData> {
   return {
     watchlist: watchlist.items,
     positions: positions.items,
-    candidates: { "5": swing.items, "20": position.items },
+    candidates: { "5": swing?.items ?? [], "20": position?.items ?? [] },
+    candidateUniverse: universe ?? undefined,
+    candidateErrors: { "5": !swing, "20": !position, universe: !universe },
     plan: dataPlan.plan,
     capabilities: dataPlan.capabilities,
     aiCapability,

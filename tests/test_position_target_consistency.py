@@ -1,4 +1,4 @@
-"""中長期目標と診断欄の抵抗・損益比の整合性を検証する。"""
+"""中期押し目目標と診断欄の抵抗・損益比の整合性を検証する。"""
 
 from dataclasses import replace
 from datetime import date, timedelta

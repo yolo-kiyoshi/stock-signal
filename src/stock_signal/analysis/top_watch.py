@@ -58,7 +58,7 @@ def head_and_shoulders_watch(bars: Sequence[DailyBar]) -> PositionEntryCondition
             f"右肩{highs[right]:.2f}の上抜けで仮説を弱め、"
             f"頭{highs[head]:.2f}の上抜けで撤回します。"
             "形状だけで下落や最適な購入時期は断定できません。"
-            "中長期の候補評価は利益成長・配当の持続性・価格妥当性も別途確認します。"
+            "中期押し目の候補評価は利益成長・配当の持続性・価格妥当性も別途確認します。"
         )
         candidates.append((right, -similarity, description))
     if not candidates:

@@ -192,7 +192,7 @@ def test_position_style_requires_longer_history() -> None:
     )
 
     assert result.status == "insufficient_data"
-    assert "中長期の買い場分析には最低70営業日" in result.message
+    assert "中期押し目分析には最低70営業日" in result.message
 
 
 def test_position_style_distinguishes_pullback_from_chasing_uptrend() -> None:

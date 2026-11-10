@@ -46,10 +46,15 @@ def normalize_summary(record: dict) -> dict:
         "Cap",
         "NumOfEmployees",
         "ShOutFY",
+        "TrShFY",
         "MarketCap",
         "MktCap",
         "RetroRst",
         "SigChgInC",
+        "MatChgSub",
+        "ChgByASRev",
+        "ChgNoASRev",
+        "ChgAcEst",
     )
     result = {key: str(record[key]) for key in fields if record.get(key) is not None}
     code = result["Code"]
@@ -97,7 +102,10 @@ def _forecast_history(visible: list[dict], as_of: date) -> tuple[list, list[str]
 
 
 def evaluate_financials(
-    records: list[dict], as_of: date, price: float | None, *, split_since_report: bool = False
+    records: list[dict], as_of: date, price: float | None, *, split_since_report: bool = False,
+    capital_events: list[str] | None = None, coverage_start: date | None = None,
+    bps_review: dict | None = None, bps_max_age_days: int = 450,
+    bps_review_max_age_days: int = 30,
 ) -> dict:
     """開示当日は使用せず、同じ期間・会計基準の累計値だけ前年と比較する。"""
     visible = sorted(
@@ -196,7 +204,19 @@ def evaluate_financials(
         metrics["forecast_op_revision_percent"] = revision
         if price and eps and eps > 0 and not split_since_report:
             metrics["forecast_per"] = price / eps
-    bps = number(latest.get("BPS"))
+    from stock_signal.bps import resolve_bps
+
+    result["bps_reference"] = resolve_bps(
+        reports, latest, as_of, capital_events=capital_events, coverage_start=coverage_start,
+        review=bps_review, max_age_days=bps_max_age_days,
+        review_max_age_days=bps_review_max_age_days, context_records=visible,
+    )
+    if split_since_report:
+        result["bps_reference"].update(
+            status="blocked", value=None, reviewable=False, review_status="invalidated",
+            reason="BPS基準日以降の分割等との整合確認が必要です。過去値は採用しません",
+        )
+    bps = result["bps_reference"]["value"]
     metrics["pbr"] = price / bps if price and bps and bps > 0 and not split_since_report else None
     if split_since_report:
         metrics["eps_yoy_percent"] = None
@@ -292,10 +312,8 @@ def evaluate_financials(
                 "category": "review_required"
                 if historical_bps and bps is None
                 else "metrics_missing",
-                "message": "最新決算のBPSが欠けています。過去のBPSはありますが、"
-                "基準日・分割・資本変動の整合確認前には代用しません"
-                if historical_bps and bps is None
-                else "PBRに必要な正のBPSまたは実株価がありません",
+                "message": "BPS確認：" + result["bps_reference"]["reason"]
+                if bps is None else "PBRに必要な正の実株価がありません",
             }
         )
     result["event_status"] = "hold" if result["events"] else "partial"

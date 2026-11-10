@@ -30,6 +30,7 @@ from stock_signal.database import (
     add_watchlist_item,
     bulk_sync_status,
     bulk_upsert_positions,
+    candidate_universe,
     data_sync_succeeded,
     get_instruments_by_symbols,
     latest_bulk_file_date,
@@ -54,6 +55,7 @@ from stock_signal.importers.rakuten import (
 )
 from stock_signal.market_environment import market_regime_as_dict
 from stock_signal.persistence.engine import check_database
+from stock_signal.web.bps_review import bps_review_router
 from stock_signal.web.position_journal import journal_router
 
 settings = Settings.from_env()
@@ -76,6 +78,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(journal_router(settings.database_url))
+app.include_router(bps_review_router(settings.database_url))
 
 
 @app.middleware("http")
@@ -506,6 +509,11 @@ def watchlist() -> dict[str, object]:
             for item in items
         ],
     }
+
+
+@app.get("/api/v1/candidate-universe")
+def candidate_universe_api() -> dict[str, object]:
+    return candidate_universe(settings.database_url)
 
 
 @app.get("/api/v1/market-candidates")

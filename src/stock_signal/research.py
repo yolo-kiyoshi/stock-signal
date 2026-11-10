@@ -34,23 +34,20 @@ class ResearchInputs:
         return self._bars[key]
 
 
-def enrich_analysis(
-    database_url: str,
-    result: AnalysisResult,
-    bars: list,
-    *,
-    provider: str | None,
-    inputs: ResearchInputs | None = None,
-    technical_action: str | None = None,
-) -> AnalysisResult:
-    """現在の分析に制約を加える。既存の過去検証へ現在保有を混入させない。"""
-    if not bars:
-        return result
-    as_of = bars[-1].trade_date
+def assess_financials(database_url: str, symbol: str, bars: list, *,
+                      provider: str | None = "jquants") -> dict:
+    """画面分析と手動確認で同じ財務・BPS判定を使用する。"""
+    from stock_signal.bps import bps_limits
+    from stock_signal.research_store import load_bps_review
+
     decision_date = date.today()
-    raw_price = bars[-1].raw_close or (bars[-1].close if not bars[-1].is_adjusted else None)
+    as_of = bars[-1].trade_date if bars else decision_date
+    raw_price = (bars[-1].raw_close or (
+        bars[-1].close if not bars[-1].is_adjusted else None
+    )) if bars else None
+    limits = bps_limits()
     records = (
-        load_disclosures(database_url, result.symbol, decision_date + timedelta(days=1))
+        load_disclosures(database_url, symbol, decision_date + timedelta(days=1))
         if provider == "jquants"
         else []
     )
@@ -64,21 +61,28 @@ def enrich_analysis(
         key=lambda r: (r.get("CurPerEn", ""), r["DiscDate"], r.get("DiscTime", ""), r["DiscNo"]),
         default={},
     )
-    report_date = report.get("DiscDate", as_of.isoformat())
+    report_date = report.get("CurPerEn", as_of.isoformat())
     split = any(
         b.adjustment_factor is not None and b.adjustment_factor != 1
         for b in bars
         if b.trade_date.isoformat() > report_date
     )
     financials = evaluate_financials(
-        records, decision_date, float(raw_price) if raw_price else None, split_since_report=split
+        records, decision_date, float(raw_price) if raw_price else None, split_since_report=split,
+        capital_events=[f"{b.trade_date.isoformat()}:{b.adjustment_factor}" for b in bars
+                        if b.adjustment_factor is not None and b.adjustment_factor != 1],
+        coverage_start=(bars[0].trade_date if bars and all(
+            b.adjustment_factor is not None for b in bars
+        ) else None),
+        bps_review=load_bps_review(database_url, symbol) if provider == "jquants" else None,
+        bps_max_age_days=limits[0], bps_review_max_age_days=limits[1],
     )
     if any(r["DiscDate"] == decision_date.isoformat() for r in records):
         financials["event_status"] = "hold"
         financials["events"].append(
             "本日の財務開示があります。日次判定への反映前に内容確認が必要です"
         )
-    financials["sync"] = financial_sync_state(database_url, result.symbol)
+    financials["sync"] = financial_sync_state(database_url, symbol)
     if financials["sync"]["status"] != "success":
         if financials["status"] == "reviewed":
             financials["status"] = "partial"
@@ -91,6 +95,24 @@ def enrich_analysis(
                 "財務データを再取得してください",
             },
         )
+    return financials
+
+
+def enrich_analysis(
+    database_url: str,
+    result: AnalysisResult,
+    bars: list,
+    *,
+    provider: str | None,
+    inputs: ResearchInputs | None = None,
+    technical_action: str | None = None,
+) -> AnalysisResult:
+    """現在の分析に制約を加える。既存の過去検証へ現在保有を混入させない。"""
+    if not bars:
+        return result
+    as_of = bars[-1].trade_date
+    raw_price = bars[-1].raw_close or (bars[-1].close if not bars[-1].is_adjusted else None)
+    financials = assess_financials(database_url, result.symbol, bars, provider=provider)
     decision = result.investment_decision
     technical_action = technical_action or (
         decision.action.value if decision else "insufficient_data"
@@ -100,7 +122,7 @@ def enrich_analysis(
         reasons.extend(issue["message"] for issue in financials["issues"])
         reasons.extend(financials["cautions"] if financials["status"] == "caution" else [])
         if not reasons:
-            reasons.append("中長期の企業品質・業績・評価倍率の確認が完了していません")
+            reasons.append("中期押し目の企業品質・業績・評価倍率の確認が完了していません")
     if financials["event_status"] == "hold":
         reasons.extend(financials["events"])
     if (date.today() - as_of).days > 4:
@@ -192,6 +214,9 @@ def enrich_analysis(
     if technical_action == "buy_candidate":
         if decision and decision.action == InvestmentAction.BUY_CANDIDATE:
             screening_status = "candidate"
+        elif (result.horizon_days == 20 and financials["status"] == "caution"
+              or financials["event_status"] == "hold"):
+            screening_status = "financial_caution"
         elif result.horizon_days == 20 and financials["status"] in {"missing", "partial", "stale"}:
             categories = {issue["category"] for issue in financials["issues"]}
             screening_status = next(
@@ -208,7 +233,7 @@ def enrich_analysis(
         result,
         investment_decision=decision,
         research={
-            "version": "light-research-v3",
+            "version": "light-research-v4",
             "financials": financials,
             "portfolio": sizing,
             "technical_action": technical_action,
